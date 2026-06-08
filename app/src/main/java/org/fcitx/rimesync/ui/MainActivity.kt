@@ -1,6 +1,5 @@
 package org.fcitx.rimesync.ui
 
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -23,7 +22,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCloudSync: Button
     private lateinit var btnImportConfig: Button
     private lateinit var btnSaveConfig: Button
-    private lateinit var btnBrowseRemote: Button
     private lateinit var tvStatus: TextView
     private lateinit var tvRemotes: TextView
     private lateinit var tvRimeDir: TextView
@@ -44,7 +42,6 @@ class MainActivity : AppCompatActivity() {
         btnCloudSync = findViewById(R.id.btnCloudSync)
         btnImportConfig = findViewById(R.id.btnImportConfig)
         btnSaveConfig = findViewById(R.id.btnSaveConfig)
-        btnBrowseRemote = findViewById(R.id.btnBrowseRemote)
         tvStatus = findViewById(R.id.tvStatus)
         tvRemotes = findViewById(R.id.tvRemotes)
         tvRimeDir = findViewById(R.id.tvRimeDir)
@@ -62,7 +59,6 @@ class MainActivity : AppCompatActivity() {
         btnCloudSync.setOnClickListener { triggerCloudSync() }
         btnImportConfig.setOnClickListener { openFilePicker() }
         btnSaveConfig.setOnClickListener { saveConfig() }
-        btnBrowseRemote.setOnClickListener { browseRemoteDir() }
     }
 
     override fun onResume() {
@@ -110,39 +106,6 @@ class MainActivity : AppCompatActivity() {
         tvRemotes.text = if (remotes.isEmpty()) "No remotes" else "Remotes: ${remotes.joinToString(", ")}"
     }
 
-    private fun browseRemoteDir() {
-        val remotes = CloudSyncHelper.parseRemotes(this)
-        if (remotes.isEmpty()) { setStatus("No remotes", R.color.status_err); return }
-        setStatus("Browsing...", R.color.status_pending)
-        setButtonsEnabled(false)
-        Thread {
-            val dirs = CloudSyncHelper.browseRemote(this, remotes.first(),
-                etRemotePath.text.toString().trim().trimEnd('/')) { m ->
-                handler.post { setStatus(m, R.color.status_pending) }
-            }
-            handler.post {
-                setButtonsEnabled(true)
-                if (dirs.isEmpty()) setStatus("No subdirs", R.color.status_pending)
-                else showRemoteDirDialog(remotes.first(), etRemotePath.text.toString().trim().trimEnd('/'), dirs)
-            }
-        }.start()
-    }
-
-    private fun showRemoteDirDialog(remote: String, parent: String, dirs: List<String>) {
-        AlertDialog.Builder(this)
-            .setTitle("$remote:$parent")
-            .setItems((listOf("[Current dir]") + dirs).toTypedArray()) { _, which ->
-                if (which == 0) setStatus("Selected: $remote:$parent", R.color.status_ok)
-                else {
-                    val sel = dirs[which - 1]
-                    val new = if (parent.isEmpty()) sel else "$parent/$sel"
-                    etRemotePath.setText("$new/")
-                    CloudSyncHelper.setRemoteSyncPath(this, "$new/")
-                    setStatus("Selected: $remote:$new/", R.color.status_ok)
-                }
-            }.setNegativeButton("Cancel", null).show()
-    }
-
     private fun triggerLocalSync() {
         setStatus("Local sync...", R.color.status_pending)
         setButtonsEnabled(false)
@@ -173,7 +136,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setStatus(text: String, cid: Int) { tvStatus.text = text; tvStatus.setTextColor(getColor(cid)) }
     private fun setButtonsEnabled(e: Boolean) {
-        listOf(btnLocalSync, btnCloudSync, btnImportConfig, btnSaveConfig, btnBrowseRemote)
+        listOf(btnLocalSync, btnCloudSync, btnImportConfig, btnSaveConfig)
             .forEach { it.isEnabled = e; it.alpha = if (e) 1.0f else 0.5f }
     }
 }

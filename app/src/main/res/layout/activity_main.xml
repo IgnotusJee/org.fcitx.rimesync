@@ -145,14 +145,6 @@
             android:singleLine="true"
             android:padding="4dp"
             android:background="@null" />
-
-        <Button
-            android:id="@+id/btnBrowseRemote"
-            android:layout_width="60dp"
-            android:layout_height="34dp"
-            android:text="..."
-            android:textSize="14sp"
-            android:backgroundTint="#1976D2" />
     </LinearLayout>
 
     <!-- Action buttons -->

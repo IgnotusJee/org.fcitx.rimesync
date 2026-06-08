@@ -3,6 +3,7 @@ package org.fcitx.rimesync
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import java.io.*
 import java.util.zip.ZipInputStream
@@ -158,6 +159,60 @@ object CloudSyncHelper {
         }
     }
 
+    // ── Device name detection ─────────────────────────────────────────
+
+    private fun detectDeviceName(localDir: String, rimeDir: String): String {
+        // 1. Try installation.yaml (written by Rime after first sync)
+        val installYaml = File(rimeDir, "installation.yaml")
+        if (installYaml.isFile) {
+            try {
+                val idMatch = Regex("""device_id:\s*"?([^"#\s]+)""")
+                    .find(installYaml.readText())
+                idMatch?.groupValues?.get(1)?.let { return it }
+            } catch (_: Exception) {}
+        }
+        // 2. Match local dirs against device codename
+        val codename = Build.DEVICE.lowercase()
+        File(localDir).listFiles()?.forEach { f ->
+            if (f.isDirectory) {
+                val name = f.name
+                if (name.lowercase().startsWith(codename)) return name
+            }
+        }
+        // 3. Fallback: first subdirectory found, or device codename
+        File(localDir).listFiles()?.firstOrNull { it.isDirectory }?.name?.let { return it }
+        return codename
+    }
+
+    private fun runRcloneCmd(
+        bin: File, subCmd: String, src: String, dst: String,
+        configPath: String, cacheDir: String, homeDir: String,
+        logFile: String, exclude: String? = null, dryRun: Boolean = false
+    ): Int {
+        val args = mutableListOf(
+            bin.absolutePath, subCmd, src, dst,
+            "--config", configPath,
+            "--create-empty-src-dirs",
+            "--no-check-certificate", "--timeout", "30s",
+            "--log-file", logFile, "--log-level", "INFO"
+        )
+        if (exclude != null) { args.add("--exclude"); args.add(exclude) }
+        if (dryRun) args.add("--dry-run")
+
+        val pb = ProcessBuilder(args).redirectErrorStream(true)
+        pb.environment()["HOME"] = homeDir
+        pb.environment()["TMPDIR"] = cacheDir
+
+        return try {
+            val p = pb.start()
+            p.inputStream.bufferedReader().readText() // consume output
+            p.waitFor().also { p.destroy() }
+        } catch (e: Exception) {
+            Log.e(TAG, "rclone $subCmd failed", e)
+            -1
+        }
+    }
+
     // ── Sync execution ────────────────────────────────────────────────
 
     fun runSync(context: Context, onProgress: ((String) -> Unit)? = null): Boolean {
@@ -176,33 +231,40 @@ object CloudSyncHelper {
         val remote = remotes.first()
         val remoteFull = "$remote:${getRemoteSyncPath(context)}"
         val cacheDir = File(context.cacheDir, "rclone_cache").also { it.mkdirs() }
-        val cmd = arrayOf(bin.absolutePath, "bisync", localDir, remoteFull,
-            "--config", configFile.absolutePath, "--create-empty-src-dirs",
-            "--compare", "size,modtime,checksum",
-            "--cache-dir", cacheDir.absolutePath, "--resync",
-            "--no-check-certificate", "--timeout", "30s",
-            "--log-file", File(context.filesDir, "rclone.log").absolutePath, "--log-level", "INFO")
+        val homeDir = context.filesDir.absolutePath
+        val logFile = File(context.filesDir, "rclone.log").absolutePath
 
-        val env = ProcessBuilder(*cmd).redirectErrorStream(true)
-        env.environment()["HOME"] = context.filesDir.absolutePath
-        env.environment()["TMPDIR"] = cacheDir.absolutePath
-        onProgress?.invoke("$localDir ↔ $remoteFull")
-        return try {
-            val p = env.start()
-            val out = p.inputStream.bufferedReader().readText()
-            val ec = p.waitFor(); p.destroy()
-            if (ec == 0 || ec == 2) {
-                onProgress?.invoke("Cloud sync done ✓ ($remote)")
-                true
-            } else {
-                onProgress?.invoke("Sync failed (exit $ec): ${out.takeLast(300)}")
-                false
+        val deviceName = detectDeviceName(localDir, paths.rimeDir)
+        val localDeviceDir = File(localDir, deviceName)
+        Log.i(TAG, "Device: $deviceName, local: ${localDeviceDir.absolutePath}")
+
+        // Step A: Upload this device's data
+        if (localDeviceDir.isDirectory) {
+            onProgress?.invoke("Upload: $deviceName...")
+            val ec = runRcloneCmd(bin, "sync",
+                localDeviceDir.absolutePath, "$remoteFull/$deviceName",
+                configFile.absolutePath, cacheDir.absolutePath,
+                homeDir, logFile)
+            if (ec != 0) {
+                onProgress?.invoke("Upload failed (exit $ec)")
+                return false
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "rclone failed", e)
-            onProgress?.invoke("Error: ${e.message}")
-            false
+            onProgress?.invoke("Upload done ✓")
         }
+
+        // Step B: Download other devices' data
+        onProgress?.invoke("Download: other devices...")
+        val ec2 = runRcloneCmd(bin, "sync",
+            remoteFull, localDir,
+            configFile.absolutePath, cacheDir.absolutePath,
+            homeDir, logFile, exclude = "$deviceName/**")
+        if (ec2 != 0) {
+            onProgress?.invoke("Download failed (exit $ec2)")
+            return false
+        }
+
+        onProgress?.invoke("Cloud sync done ✓ ($remote)")
+        return true
     }
 
     private fun getPrefs(context: Context): SharedPreferences =
