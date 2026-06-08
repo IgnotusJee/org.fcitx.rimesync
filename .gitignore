@@ -1,12 +1,19 @@
 # Gradle
 .gradle/
 build/
+.kotlin/
 
 # IDE
 .idea/
 *.iml
 *.iws
 *.ipr
+
+# Code analysis
+.understand-anything/
+
+# AI config
+agent.md
 
 # Android
 local.properties
