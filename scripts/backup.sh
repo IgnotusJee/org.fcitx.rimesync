@@ -33,7 +33,8 @@ BROADCAST_TARGET="org.fcitx.fcitx5.android"
 # ═══════════════════════════════════════════════════════════════
 json_get() {
     local file="$1" key="$2"
-    sed -n 's/.*"'"$key"'"\s*:\s*"\([^"]*\)".*/\1/p' "$file" | head -1
+    # Android busybox sed: use [[:space:]] instead of \s
+    sed -n 's/.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -1
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -87,14 +88,27 @@ fi
 #  Phase 2: Find rclone binary
 # ═══════════════════════════════════════════════════════════════
 RCLONE=""
+RCLONE_SRC=""  # original binary location (may be on noexec mount)
+
+# Search for rclone binary
 if command -v rclone >/dev/null 2>&1; then
     RCLONE="$(command -v rclone)"
 else
-    for p in /data/adb/modules/rclone-binary/system/bin/rclone \
+    for p in "${SYNC_DATA_DIR}/rclone_bin/rclone" \
+             /data/adb/modules/rclone-binary/system/bin/rclone \
              /data/adb/modules/rclone/system/bin/rclone \
-             /data/adb/modules/rime-sync-scheduler/rclone \
-             /data/local/tmp/rime_sync_rclone; do
-        [ -x "$p" ] && { RCLONE="$p"; break; }
+             /data/adb/modules/rime-sync-scheduler/rclone; do
+        if [ -f "$p" ]; then
+            RCLONE_SRC="$p"
+            # Try direct exec; if noexec mount, copy to /data/local/tmp/
+            if [ -x "$p" ]; then
+                RCLONE="$p"
+            else
+                RCLONE="/data/local/tmp/rime_sync_rclone"
+                cp -f "$p" "$RCLONE" && chmod 755 "$RCLONE" && log "[cloud] Copied rclone to $RCLONE (source is noexec)"
+            fi
+            break
+        fi
     done
 fi
 
