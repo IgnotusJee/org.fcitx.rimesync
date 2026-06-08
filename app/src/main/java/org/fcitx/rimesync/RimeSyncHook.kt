@@ -135,10 +135,17 @@ class RimeSyncHook : XposedModule() {
             for (dir in rimeDirs) {
                 val yaml = java.io.File(dir, "installation.yaml")
                 if (yaml.exists()) {
+                    // Extract paths + device name from installation.yaml
                     val content = yaml.readText()
+
+                    // sync_dir
                     val pattern = Regex("""sync_dir:\s*['"](.+?)['"]""")
                     val syncDir = pattern.find(content)?.groupValues?.get(1) ?: continue
                     val expanded = if (syncDir.startsWith("~/")) syncDir.replaceFirst("~", "/sdcard") else syncDir
+
+                    // device_name from installation_id
+                    val idMatch = Regex("""installation_id:\s*"?([^"#\s]+)""").find(content)
+                    val deviceName = idMatch?.groupValues?.get(1) ?: ""
 
                     // Write paths file
                     java.io.File(syncDataDir, CloudSyncHelper.PATH_FILE)
@@ -152,7 +159,7 @@ class RimeSyncHook : XposedModule() {
 {
   "remote_path": "rime/",
   "rclone_config": "${syncDataDir.absolutePath}/rclone.conf",
-  "device_name": ""
+  "device_name": "$deviceName"
 }
                         """.trimIndent() + "\n"
                         configFile.writeText(defaultJson)

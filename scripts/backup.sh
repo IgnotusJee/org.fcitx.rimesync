@@ -147,7 +147,7 @@ log "[cloud] Local source: $SYNC_DIR"
 DEVICE_NAME=$(json_get "$JSON_CONFIG" "device_name")
 # Fallback: installation.yaml
 if [ -z "$DEVICE_NAME" ] && [ -n "$RIME_DIR" ] && [ -f "$RIME_DIR/installation.yaml" ]; then
-    DEVICE_NAME=$(sed -n 's/.*device_id:[[:space:]]*"\?\([^"#[:space:]]*\)"\?.*/\1/p' "$RIME_DIR/installation.yaml" | tr -d '\r')
+    DEVICE_NAME=$(sed -n 's/.*installation_id:[[:space:]]*"\?\([^"#[:space:]]*\)"\?.*/\1/p' "$RIME_DIR/installation.yaml" | tr -d '\r')
 fi
 # Fallback: match local sync dirs
 if [ -z "$DEVICE_NAME" ] && [ -d "$SYNC_DIR" ]; then
