@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Android
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Proxy / temp
+*.log
+*.tmp

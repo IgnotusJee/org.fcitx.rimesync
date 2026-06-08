@@ -1,0 +1,127 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "unknown",
+  "generatedAt": "2026-06-07T12:16:14.961Z",
+  "files": {
+    "agent.md": {
+      "filePath": "agent.md",
+      "contentHash": "6d00c310ca9b1eff7b9ca232f7c7f89bde541a050ed0a09481a602d99570a754",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 179,
+      "hasStructuralAnalysis": true
+    },
+    "build.gradle.kts": {
+      "filePath": "build.gradle.kts",
+      "contentHash": "8988c6d28bcbb2ff25cf2d85e0397c2da343e87dc1257f90fa10e1bd6fe92f9e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 5,
+      "hasStructuralAnalysis": false
+    },
+    "gradle.properties": {
+      "filePath": "gradle.properties",
+      "contentHash": "678c35a27eeda302d6a960484179d118d08fb1edf05c1b40745bc7aed6e88f03",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 5,
+      "hasStructuralAnalysis": false
+    },
+    "module.prop": {
+      "filePath": "module.prop",
+      "contentHash": "d1e8ff9196ee9f2a776fcbbf8908590d845a04f2c9f7016b3736dbbbd30c8a3f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": false
+    },
+    "settings.gradle.kts": {
+      "filePath": "settings.gradle.kts",
+      "contentHash": "feb6562b26c16f15c6a1b0aa8480bb7377cccd739d8f685d414666dc8cc009bc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 19,
+      "hasStructuralAnalysis": false
+    },
+    "app/build.gradle.kts": {
+      "filePath": "app/build.gradle.kts",
+      "contentHash": "9c3b133df1c3f99a15d0e4747df077290a2695ea06e309ab6037a6d0c97556ac",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": false
+    },
+    "app/src/main/AndroidManifest.xml": {
+      "filePath": "app/src/main/AndroidManifest.xml",
+      "contentHash": "a61114d5018c1101ff273a5478f9f02ad6826cc53e02976b1ab9bf05c2cd88e7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": false
+    },
+    "app/src/main/assets/xposed_init": {
+      "filePath": "app/src/main/assets/xposed_init",
+      "contentHash": "9086a88884cab98e9d6c098b487e2595211432e6295c5751c598fa4bdee83a9b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": false
+    },
+    "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt": {
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "contentHash": "7198dcb5f72e3342ec8dff911cbf3b78af3d89bbe2e3bc097f2179480ff4da2a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 244,
+      "hasStructuralAnalysis": false
+    },
+    "app/src/main/res/values/arrays.xml": {
+      "filePath": "app/src/main/res/values/arrays.xml",
+      "contentHash": "7039c47b396797204e4dc08eda3ba59f38abc6c38edfd4577475d2cfed8cde85",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": false
+    },
+    "scripts/backup.sh": {
+      "filePath": "scripts/backup.sh",
+      "contentHash": "7eb2ef9293e9b4f255a09fab3cb9b1db9566722e2386927f6a9bf2d7a0d913b5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 66,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/setup-crond.sh": {
+      "filePath": "scripts/setup-crond.sh",
+      "contentHash": "be78f615b76bcd1119a333fdaa910ae0cb5a25435e7c704a00e0c2ad06abb004",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 70,
+      "hasStructuralAnalysis": true
+    }
+  }
+}

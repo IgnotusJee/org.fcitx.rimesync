@@ -1,0 +1,36 @@
+{
+  "projectName": "rime-sync-scheduler",
+  "projectDescription": "LSPosed 模块，按需通过广播触发 fcitx5-android rime 插件的本地同步（api_->sync_user_data()），并可选择性运行 rclone 将数据备份到远程存储。搭配 KernelSU + crond4android 实现完全自动化的定时备份。",
+  "languages": ["Kotlin", "Shell", "XML", "Gradle Kotlin DSL", "Markdown"],
+  "frameworks": ["LSPosed", "Android", "Gradle", "fcitx5-android"],
+  "complexity": "simple",
+  "files": [
+    { "path": "agent.md", "language": "Markdown", "sizeLines": 178, "fileCategory": "docs" },
+    { "path": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt", "language": "Kotlin", "sizeLines": 243, "fileCategory": "code" },
+    { "path": "scripts/backup.sh", "language": "Shell", "sizeLines": 65, "fileCategory": "script" },
+    { "path": "scripts/setup-crond.sh", "language": "Shell", "sizeLines": 69, "fileCategory": "script" },
+    { "path": "module.prop", "language": "Properties", "sizeLines": 7, "fileCategory": "config" },
+    { "path": "app/src/main/assets/xposed_init", "language": "Plain Text", "sizeLines": 1, "fileCategory": "config" },
+    { "path": "app/src/main/res/values/arrays.xml", "language": "XML", "sizeLines": 6, "fileCategory": "markup" },
+    { "path": "app/src/main/AndroidManifest.xml", "language": "XML", "sizeLines": 31, "fileCategory": "config" },
+    { "path": "app/build.gradle.kts", "language": "Kotlin", "sizeLines": 41, "fileCategory": "config" },
+    { "path": "gradle.properties", "language": "Properties", "sizeLines": 4, "fileCategory": "config" },
+    { "path": "build.gradle.kts", "language": "Kotlin", "sizeLines": 4, "fileCategory": "config" },
+    { "path": "settings.gradle.kts", "language": "Kotlin", "sizeLines": 18, "fileCategory": "config" }
+  ],
+  "filteredByIgnore": 0,
+  "importMap": {
+    "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt": [],
+    "agent.md": [],
+    "scripts/backup.sh": [],
+    "scripts/setup-crond.sh": [],
+    "module.prop": [],
+    "app/src/main/assets/xposed_init": [],
+    "app/src/main/res/values/arrays.xml": [],
+    "app/src/main/AndroidManifest.xml": [],
+    "app/build.gradle.kts": [],
+    "gradle.properties": [],
+    "build.gradle.kts": [],
+    "settings.gradle.kts": []
+  }
+}

@@ -1,0 +1,7 @@
+id=rime-sync-scheduler
+name=Rime Sync Scheduler
+version=v1.0
+versionCode=1
+author=fcitx5-android user
+description=Broadcast-triggered rime sync for fcitx5-android. \n\
+  Usage: am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC

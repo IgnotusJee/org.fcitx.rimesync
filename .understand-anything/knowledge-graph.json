@@ -1,0 +1,692 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "rime-sync-scheduler",
+    "languages": [
+      "Kotlin",
+      "Shell",
+      "XML",
+      "Gradle Kotlin DSL",
+      "Markdown"
+    ],
+    "frameworks": [
+      "LSPosed",
+      "Android",
+      "Gradle",
+      "fcitx5-android"
+    ],
+    "description": "LSPosed 模块，按需通过广播触发 fcitx5-android rime 插件的本地同步（api_->sync_user_data()），并可选择性运行 rclone 将数据备份到远程存储。搭配 KernelSU + crond4android 实现完全自动化的定时备份。",
+    "analyzedAt": "2026-06-07T12:15:59.828Z",
+    "gitCommitHash": "unknown"
+  },
+  "nodes": [
+    {
+      "id": "document:agent.md",
+      "type": "document",
+      "name": "agent.md",
+      "filePath": "agent.md",
+      "summary": "项目总体文档，涵盖架构设计、关键设计决策（setAddonSubConfig 绕过 InputContext 限制）、前置依赖、构建与安装步骤、使用方式（手动触发与 KernelSU+crond4android 自动化）、数据路径及技术细节说明。共 16 个章节。",
+      "tags": [
+        "文档",
+        "架构",
+        "入口指南",
+        "技术说明",
+        "总览"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:build.gradle.kts",
+      "type": "config",
+      "name": "build.gradle.kts",
+      "filePath": "build.gradle.kts",
+      "summary": "根级 Gradle 构建脚本，声明 Android 应用插件（8.3.2）和 Kotlin Android 插件（1.9.22）版本，apply false 表示仅在根项目声明，子模块按需使用。",
+      "tags": [
+        "构建系统",
+        "gradle",
+        "android",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:gradle.properties",
+      "type": "config",
+      "name": "gradle.properties",
+      "filePath": "gradle.properties",
+      "summary": "Gradle 全局属性配置：JVM 堆内存 2048MB、启用 AndroidX、Kotlin 代码风格设为 official、非传递 R 类。",
+      "tags": [
+        "构建系统",
+        "gradle",
+        "jvm配置",
+        "androidx"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:module.prop",
+      "type": "config",
+      "name": "module.prop",
+      "filePath": "module.prop",
+      "summary": "LSPosed 模块描述文件，定义模块 ID（rime-sync-scheduler）、名称、版本（v1.0）、作者及用途说明——通过广播触发 fcitx5-android 的 rime 同步。",
+      "tags": [
+        "配置",
+        "lsposed",
+        "模块描述",
+        "元数据"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:settings.gradle.kts",
+      "type": "config",
+      "name": "settings.gradle.kts",
+      "filePath": "settings.gradle.kts",
+      "summary": "Gradle 设置脚本，配置插件仓库（Google、Maven Central、Gradle Plugin Portal）、依赖解析仓库，并声明根项目名称为 rime-sync-scheduler，包含 :app 子模块。",
+      "tags": [
+        "构建系统",
+        "gradle",
+        "仓库配置",
+        "多模块"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:app/build.gradle.kts",
+      "type": "config",
+      "name": "app/build.gradle.kts",
+      "filePath": "app/build.gradle.kts",
+      "summary": "App 模块 Gradle 构建脚本：命名空间 org.fcitx.rimesync，compileSdk/targetSdk 34，minSdk 26，JVM 目标 17；compileOnly 依赖 Xposed API (v82) 和 Kotlin 协程（不做打包，由目标应用提供）。",
+      "tags": [
+        "构建系统",
+        "gradle",
+        "android",
+        "依赖管理",
+        "compileOnly"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:app/src/main/AndroidManifest.xml",
+      "type": "config",
+      "name": "AndroidManifest.xml",
+      "filePath": "app/src/main/AndroidManifest.xml",
+      "summary": "Android 清单文件，声明 LSPosed 模块元数据：标记为 xposedmodule、描述为定时广播触发 rime 同步、最低 Xposed API 93、作用域指向 fcitx5-android 包。",
+      "tags": [
+        "android",
+        "清单",
+        "lsposed",
+        "元数据",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:app/src/main/assets/xposed_init",
+      "type": "config",
+      "name": "xposed_init",
+      "filePath": "app/src/main/assets/xposed_init",
+      "summary": "Xposed 入口声明文件，指定 LSPosed 框架加载的 Hook 入口类：org.fcitx.rimesync.RimeSyncHook。",
+      "tags": [
+        "配置",
+        "lsposed",
+        "入口点",
+        "hook"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "file",
+      "name": "RimeSyncHook.kt",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "summary": "LSPosed 核心 Hook 模块，注入到 fcitx5-android 进程中。包含 RimeSyncHook（IXposedHookLoadPackage 实现，hook FcitxApplication.onCreate 以注册广播接收器）和 RimeSyncReceiver（BroadcastReceiver 子类，通过 Java 反射调用 fcitx 内部 API——FcitxDaemon.connect → runImmediately → setFcitxAddonSubConfig(\"rime\", \"sync\")——在不依赖活动输入上下文的情况下触发 rime 本地同步）。",
+      "tags": [
+        "lsposed",
+        "hook",
+        "广播接收器",
+        "rime",
+        "同步",
+        "核心逻辑",
+        "反射"
+      ],
+      "complexity": "complex",
+      "languageNotes": "由于 LSPosed 模块编译时仅依赖 Xposed API，所有与 fcitx5-android 内部的交互均通过 Java 反射实现，包括 Kotlin object 单例访问、suspend lambda 的 Proxy 模拟、private companion method 调用等。"
+    },
+    {
+      "id": "file:app/src/main/res/values/arrays.xml",
+      "type": "file",
+      "name": "arrays.xml",
+      "filePath": "app/src/main/res/values/arrays.xml",
+      "summary": "Android 资源文件，定义字符串数组 xposed_scope，指定 LSPosed 模块的作用域为目标包 org.fcitx.fcitx5.android。",
+      "tags": [
+        "android",
+        "资源",
+        "lsposed",
+        "作用域",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scripts/backup.sh",
+      "type": "file",
+      "name": "backup.sh",
+      "filePath": "scripts/backup.sh",
+      "summary": "rclone 备份脚本：在 rime 本地同步完成后执行，将 rime 用户数据目录同步到远程 rclone 存储。支持 --dry-run 模式、路径存在性检查、rclone 可用性检查，并输出带时间戳的日志。",
+      "tags": [
+        "脚本",
+        "备份",
+        "rclone",
+        "shell",
+        "自动化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:scripts/setup-crond.sh",
+      "type": "file",
+      "name": "setup-crond.sh",
+      "filePath": "scripts/setup-crond.sh",
+      "summary": "crond4android 定时任务配置脚本：每 6 小时执行一次广播触发（am broadcast → TRIGGER_RIME_SYNC）+ 等待 10 秒 + rclone 远程备份。具备幂等性（先移除已有条目再添加）和前置条件检查。",
+      "tags": [
+        "脚本",
+        "cron",
+        "自动化",
+        "定时任务",
+        "shell"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+      "type": "class",
+      "name": "RimeSyncHook",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        29,
+        68
+      ],
+      "summary": "LSPosed 模块入口类，实现 IXposedHookLoadPackage 接口。在 fcitx5-android 的 FcitxApplication 首次加载时，hook 其 onCreate 方法以注册 RimeSyncReceiver 广播接收器，监听 TRIGGER_RIME_SYNC 广播。",
+      "tags": [
+        "入口点",
+        "lsposed",
+        "hook",
+        "初始化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "type": "class",
+      "name": "RimeSyncReceiver",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        85,
+        243
+      ],
+      "summary": "BroadcastReceiver 子类，接收外部广播后通过 Java 反射连接 fcitx 守护进程并在 fcitx 线程上调用 setAddonSubConfig(\"rime\", \"sync\") 以触发 rime 本地同步。不依赖活动输入上下文。",
+      "tags": [
+        "广播接收器",
+        "同步",
+        "反射",
+        "fcitx",
+        "rime"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:handleLoadPackage",
+      "type": "function",
+      "name": "handleLoadPackage",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        38,
+        67
+      ],
+      "summary": "IXposedHookLoadPackage 回调，检查包名是否为 fcitx5-android 且为首次加载后，hook FcitxApplication.onCreate 以注册广播接收器。",
+      "tags": [
+        "lsposed",
+        "hook",
+        "初始化",
+        "回调"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:onReceive",
+      "type": "function",
+      "name": "onReceive",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        91,
+        103
+      ],
+      "summary": "BroadcastReceiver 回调，验证广播 action 为 TRIGGER_RIME_SYNC 后在后台线程中调用 triggerRimeSync() 执行同步。",
+      "tags": [
+        "广播",
+        "回调",
+        "事件处理"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+      "type": "function",
+      "name": "triggerRimeSync",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        107,
+        133
+      ],
+      "summary": "核心同步逻辑：通过反射加载 FcitxDaemon 和 Fcitx 类，获取 FcitxDaemon 单例，调用 connect 建立连接，在 fcitx 线程上执行同步，最后断开连接。",
+      "tags": [
+        "同步",
+        "反射",
+        "核心逻辑",
+        "fcitx"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+      "type": "function",
+      "name": "triggerSyncOnFcitxThread",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        140,
+        206
+      ],
+      "summary": "在 fcitx 事件循环线程上执行同步：通过 Proxy 创建 Kotlin suspend lambda（Function2），使用 CountDownLatch 等待结果。lambda 内通过反射获取 realFcitx → JNI companion → 调用 setFcitxAddonSubConfig(\"rime\", \"sync\", emptyConfig)，绕过 InputContext 检查。",
+      "tags": [
+        "同步",
+        "反射",
+        "jni",
+        "代理",
+        "fcitx线程"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用 java.lang.reflect.Proxy 模拟 Kotlin suspend lambda（kotlin.jvm.functions.Function2），通过 CountDownLatch 实现 15 秒超时等待。这是 LSPosed 模块中绕过编译时依赖的典型反射模式。"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getSingletonInstance",
+      "type": "function",
+      "name": "getSingletonInstance",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        210,
+        216
+      ],
+      "summary": "反射工具方法：通过 INSTANCE 字段获取 Kotlin object 单例实例。",
+      "tags": [
+        "反射",
+        "工具",
+        "单例"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getFieldValue",
+      "type": "function",
+      "name": "getFieldValue",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        218,
+        228
+      ],
+      "summary": "反射工具方法：在类及其父类链上递归查找指定字段并返回其值，支持实例字段和静态字段。",
+      "tags": [
+        "反射",
+        "工具",
+        "字段访问"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:findDeclaredMethodRecursive",
+      "type": "function",
+      "name": "findDeclaredMethodRecursive",
+      "filePath": "app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "lineRange": [
+        230,
+        242
+      ],
+      "summary": "反射工具方法：在类、父类链及接口上递归查找指定名称和参数类型的方法。",
+      "tags": [
+        "反射",
+        "工具",
+        "方法查找"
+      ],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "document:agent.md",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:agent.md",
+      "target": "config:module.prop",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:agent.md",
+      "target": "config:app/build.gradle.kts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:agent.md",
+      "target": "config:app/src/main/AndroidManifest.xml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:agent.md",
+      "target": "file:scripts/backup.sh",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:agent.md",
+      "target": "file:scripts/setup-crond.sh",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:settings.gradle.kts",
+      "target": "config:app/build.gradle.kts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:build.gradle.kts",
+      "target": "config:settings.gradle.kts",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:gradle.properties",
+      "target": "config:app/build.gradle.kts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:module.prop",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "target": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "target": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:handleLoadPackage",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:onReceive",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getSingletonInstance",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getFieldValue",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:findDeclaredMethodRecursive",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:onReceive",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getSingletonInstance",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getFieldValue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+      "target": "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:findDeclaredMethodRecursive",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "config:app/build.gradle.kts",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:app/src/main/AndroidManifest.xml",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:app/src/main/assets/xposed_init",
+      "target": "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:app/src/main/res/values/arrays.xml",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/setup-crond.sh",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "triggers",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/setup-crond.sh",
+      "target": "file:scripts/backup.sh",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:scripts/backup.sh",
+      "target": "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:core-logic",
+      "name": "核心逻辑",
+      "description": "LSPosed Hook 模块的核心代码，包括广播接收器、fcitx 守护进程反射调用、rime 同步触发逻辑。是整个项目的功能实现层。",
+      "nodeIds": [
+        "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+        "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+        "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:handleLoadPackage",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:onReceive",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getSingletonInstance",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getFieldValue",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:findDeclaredMethodRecursive"
+      ]
+    },
+    {
+      "id": "layer:automation",
+      "name": "自动化脚本",
+      "description": "Shell 脚本层：负责定时备份的 cron 配置（setup-crond.sh）和 rclone 远程同步（backup.sh）。作为核心逻辑的下游执行者。",
+      "nodeIds": [
+        "file:scripts/backup.sh",
+        "file:scripts/setup-crond.sh"
+      ]
+    },
+    {
+      "id": "layer:build-and-config",
+      "name": "构建与模块配置",
+      "description": "Android 项目构建系统（Gradle）、LSPosed 模块元数据配置（module.prop、AndroidManifest.xml、xposed_init、arrays.xml）和 Gradle 属性。定义编译参数、模块标识、Hook 入口和作用域。",
+      "nodeIds": [
+        "config:build.gradle.kts",
+        "config:app/build.gradle.kts",
+        "config:settings.gradle.kts",
+        "config:gradle.properties",
+        "config:module.prop",
+        "config:app/src/main/AndroidManifest.xml",
+        "config:app/src/main/assets/xposed_init",
+        "file:app/src/main/res/values/arrays.xml"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "文档",
+      "description": "项目文档层，包含架构设计、使用指南、技术决策说明和故障排查信息，作为整个项目的入口概览。",
+      "nodeIds": [
+        "document:agent.md"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "项目概览",
+      "description": "首先阅读 agent.md 了解项目定位：这是一个 LSPosed 模块，通过广播按需触发 fcitx5-android 的 rime 本地同步，并可搭配 rclone 和 cron 实现全自动定时备份。文档涵盖完整的架构设计、关键决策和安装使用说明。",
+      "nodeIds": [
+        "document:agent.md"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "Hook 入口与模块注册",
+      "description": "RimeSyncHook 是 LSPosed 模块的入口，实现 IXposedHookLoadPackage。在 fcitx5-android 首次加载时 hook FcitxApplication.onCreate 以注册广播接收器。xposed_init 声明入口类，module.prop 定义模块元数据，AndroidManifest.xml 标记 xposedmodule 属性，arrays.xml 限定作用域。",
+      "nodeIds": [
+        "file:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt",
+        "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncHook",
+        "config:app/src/main/assets/xposed_init",
+        "config:module.prop",
+        "config:app/src/main/AndroidManifest.xml",
+        "file:app/src/main/res/values/arrays.xml"
+      ],
+      "languageLesson": "LSPosed 模块的注册需要三个要素：xposed_init 声明类名、AndroidManifest 的 xposedmodule 元数据、module.prop 提供模块描述。"
+    },
+    {
+      "order": 3,
+      "title": "广播接收与同步触发",
+      "description": "RimeSyncReceiver 是 BroadcastReceiver 子类，监听 TRIGGER_RIME_SYNC 广播。onReceive 在后台线程中调用 triggerRimeSync()，后者通过 Java 反射连接 fcitx 守护进程。核心路径是 triggerSyncOnFcitxThread——使用 Proxy 模拟 Kotlin suspend lambda，通过 setFcitxAddonSubConfig(\"rime\", \"sync\") 绕过 InputContext 限制触发 rime 同步。工具方法（getSingletonInstance、getFieldValue、findDeclaredMethodRecursive）提供反射基础设施。",
+      "nodeIds": [
+        "class:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:RimeSyncReceiver",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:onReceive",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerRimeSync",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:triggerSyncOnFcitxThread",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getSingletonInstance",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:getFieldValue",
+        "function:app/src/main/java/org/fcitx/rimesync/RimeSyncHook.kt:findDeclaredMethodRecursive"
+      ],
+      "languageLesson": "当 LSPosed 模块编译时不依赖目标应用的内部 API 时，所有跨模块交互都必须通过 Java 反射实现：访问 Kotlin object 单例（INSTANCE 字段）、使用 Proxy 创建函数接口实例、通过 setAccessible(true) 调用私有方法。"
+    },
+    {
+      "order": 4,
+      "title": "构建系统",
+      "description": "项目使用 Gradle Kotlin DSL 构建。根级 build.gradle.kts 声明插件版本，settings.gradle.kts 配置仓库并包含 :app 模块，gradle.properties 设置 JVM 和 AndroidX 参数。app/build.gradle.kts 定义编译目标（SDK 34、JVM 17）和 compileOnly 依赖（Xposed API + Kotlin 协程，不打包进 APK）。",
+      "nodeIds": [
+        "config:build.gradle.kts",
+        "config:settings.gradle.kts",
+        "config:gradle.properties",
+        "config:app/build.gradle.kts"
+      ]
+    },
+    {
+      "order": 5,
+      "title": "自动化备份流水线",
+      "description": "自动化层包含两个 Shell 脚本：setup-crond.sh 配置 crond4android 定时任务（每 6 小时触发广播 + rclone 备份），backup.sh 执行实际的 rclone 远程同步。backup.sh 依赖核心同步已完成（先广播触发同步，再备份同步输出目录）。",
+      "nodeIds": [
+        "file:scripts/setup-crond.sh",
+        "file:scripts/backup.sh"
+      ]
+    }
+  ]
+}
