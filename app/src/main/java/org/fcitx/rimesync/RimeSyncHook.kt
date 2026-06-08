@@ -128,7 +128,8 @@ class RimeSyncHook : XposedModule() {
                     val expanded = if (syncDir.startsWith("~/")) syncDir.replaceFirst("~", "/sdcard") else syncDir
 
                     val intent = Intent(SyncPathReceiver.ACTION).apply {
-                        setPackage("org.fcitx.rimesync")
+                        // Explicit component: bypasses Android 8+ stopped-state restriction
+                        setClassName("org.fcitx.rimesync", "org.fcitx.rimesync.SyncPathReceiver")
                         putExtra(SyncPathReceiver.EXTRA_RIME_DIR, dir)
                         putExtra(SyncPathReceiver.EXTRA_SYNC_DIR, expanded)
                     }
