@@ -1,7 +1,7 @@
 id=rime-sync-scheduler
 name=Rime Sync Scheduler
-version=v2.0
-versionCode=3
+version=v1.0
+versionCode=1
 author=fcitx5-android user
 description=Rime local + cloud sync scheduler for fcitx5-android. \n\
   Config lives in fcitx5's data dir (written by hook). \n\
