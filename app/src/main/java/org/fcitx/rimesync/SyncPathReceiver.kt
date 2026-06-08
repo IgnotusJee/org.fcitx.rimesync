@@ -7,7 +7,7 @@ import java.io.File
 
 /**
  * Receives sync path data from the hook (inside fcitx5 process).
- * Writes to module's private storage for the UI to read.
+ * Writes paths for shell scripts, ensures default config on first run.
  */
 class SyncPathReceiver : BroadcastReceiver() {
 
@@ -19,6 +19,10 @@ class SyncPathReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION) return
+
+        // Ensure default JSON config exists on first launch
+        CloudSyncHelper.resolveConfigFile(context)
+
         val rimeDir = intent.getStringExtra(EXTRA_RIME_DIR) ?: ""
         val syncDir = intent.getStringExtra(EXTRA_SYNC_DIR) ?: ""
         if (rimeDir.isNotEmpty() || syncDir.isNotEmpty()) {
