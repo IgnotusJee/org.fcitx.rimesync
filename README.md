@@ -138,8 +138,7 @@ rime-sync-scheduler/
 │   └── CloudSyncHelper.kt     # 路径/配置读取工具
 ├── scripts/
 │   ├── backup.sh              # 同步脚本 (本地 + 云端)
-│   ├── setup-suscheduler.sh   # Su Scheduler 安装脚本
-│   └── setup-crond.sh         # crond4android 安装脚本 (旧)
+│   └── setup-suscheduler.sh   # Su Scheduler 安装脚本
 ├── rime_sync.json             # 配置模板
 └── module.prop                # 模块描述
 ```
