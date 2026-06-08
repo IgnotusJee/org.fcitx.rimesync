@@ -2,52 +2,37 @@
 # ============================================================
 # rime-sync-scheduler — unified sync script
 # ============================================================
-# Handles both local Rime sync (via broadcast to LSPosed hook)
-# and cloud sync (two-step rclone sync to remote storage).
-# Step A: upload this device's data; Step B: download other devices.
-#
-# Config: /data/data/org.fcitx.rimesync/files/rime_sync.json
-#   { "remote_path": "rime/", "rclone_config": "/data/data/org.fcitx.rimesync/files/rclone.conf", "device_name": "" }
+# Reads config from fcitx5's external files dir (written by LSPosed hook).
+# Config: /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/
 #
 # Modes (flags):
-#   --full-sync    Trigger local sync first, then cloud sync
-#   --cloud-only   Cloud sync only (skip local trigger)
-#   --local-only   Local sync only (skip cloud sync)
-#   --dry-run      rclone dry-run (preview only, no changes)
-#
-# Usage:
-#   sh backup.sh --full-sync
-#   sh backup.sh --cloud-only
-#   sh backup.sh --local-only
-#   sh backup.sh --full-sync --dry-run
+#   --full-sync    Local sync first, then cloud sync
+#   --cloud-only   Cloud sync only
+#   --local-only   Local sync only
+#   --dry-run      rclone dry-run (preview)
 # ============================================================
 
-# ── Paths ───────────────────────────────────────────────────
-APP_DATA="/data/data/org.fcitx.rimesync"
-PATHS_FILE="${APP_DATA}/files/rime_paths.txt"
-
-# JSON config — app private dir (edit via root: /data/data/org.fcitx.rimesync/files/rime_sync.json)
-JSON_CONFIG="${APP_DATA}/files/rime_sync.json"
+# ── fcitx5 sync data dir (hook writes here) ─────────────────
+SYNC_DATA_DIR="/storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync"
+PATHS_FILE="${SYNC_DATA_DIR}/rime_paths.txt"
+JSON_CONFIG="${SYNC_DATA_DIR}/rime_sync.json"
 
 RCLONE_CACHE="/data/local/tmp/rclone_cache"
 
-# ── Logging ─────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────
 MODDIR="/data/adb/modules/rime-sync-scheduler"
 LOG="${MODDIR}/sync.log"
 [ ! -d "$MODDIR" ] && LOG="/data/local/tmp/rime_sync.log"
 
-# ── Broadcast constants ─────────────────────────────────────
+# ── Broadcast constants ────────────────────────────────────
 BROADCAST_ACTION="org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC"
 BROADCAST_TARGET="org.fcitx.fcitx5.android"
 
 # ═══════════════════════════════════════════════════════════════
-#  JSON helpers (no jq dependency — pure sed/grep)
+#  JSON helpers (no jq — pure sed/grep)
 # ═══════════════════════════════════════════════════════════════
-# Usage: json_get <file> <key>
-# Returns the string value for the given key from a flat JSON object.
 json_get() {
     local file="$1" key="$2"
-    # Match: "key": "value" — handles escaped quotes minimally
     sed -n 's/.*"'"$key"'"\s*:\s*"\([^"]*\)".*/\1/p' "$file" | head -1
 }
 
@@ -115,8 +100,6 @@ fi
 
 if [ -z "$RCLONE" ]; then
     log "[cloud] ERROR: rclone binary not found."
-    log "[cloud] Install a rclone module for KernelSU/APatch/Magisk,"
-    log "[cloud]   or place rclone at /data/local/tmp/rime_sync_rclone"
     exit 1
 fi
 log "[cloud] rclone binary: $RCLONE"
@@ -124,20 +107,18 @@ log "[cloud] rclone binary: $RCLONE"
 # ═══════════════════════════════════════════════════════════════
 #  Phase 3: Load JSON config
 # ═══════════════════════════════════════════════════════════════
-if [ ! -f "$JSON_CONFIG" ]; then
-    log "[cloud] WARNING: rime_sync.json not found at $JSON_CONFIG, using defaults."
-    log "[cloud]   Config auto-created on first app launch, or edit manually via root."
+REMOTE_SUB_PATH="rime/"
+RCLONE_CONFIG_PATH="${SYNC_DATA_DIR}/rclone.conf"
+
+if [ -f "$JSON_CONFIG" ]; then
+    REMOTE_SUB_PATH=$(json_get "$JSON_CONFIG" "remote_path")
+    [ -z "$REMOTE_SUB_PATH" ] && REMOTE_SUB_PATH="rime/"
+    RCLONE_CONFIG_PATH=$(json_get "$JSON_CONFIG" "rclone_config")
+    [ -z "$RCLONE_CONFIG_PATH" ] && RCLONE_CONFIG_PATH="${SYNC_DATA_DIR}/rclone.conf"
 fi
-
-REMOTE_SUB_PATH=$(json_get "$JSON_CONFIG" "remote_path")
-[ -z "$REMOTE_SUB_PATH" ] && REMOTE_SUB_PATH="rime/"
-# Remove leading slash for rclone compatibility
 REMOTE_SUB_PATH="${REMOTE_SUB_PATH#/}"
-log "[cloud] Remote sub-path (from config): $REMOTE_SUB_PATH"
-
-RCLONE_CONFIG_PATH=$(json_get "$JSON_CONFIG" "rclone_config")
-[ -z "$RCLONE_CONFIG_PATH" ] && RCLONE_CONFIG_PATH="${APP_DATA}/files/rclone.conf"
-log "[cloud] rclone config path: $RCLONE_CONFIG_PATH"
+log "[cloud] Remote sub-path: $REMOTE_SUB_PATH"
+log "[cloud] rclone config: $RCLONE_CONFIG_PATH"
 
 # ═══════════════════════════════════════════════════════════════
 #  Phase 4: Read local sync directory
@@ -147,21 +128,15 @@ RIME_DIR=""
 if [ -f "$PATHS_FILE" ]; then
     RIME_DIR=$(sed -n '1p' "$PATHS_FILE" | tr -d '\r')
     SYNC_DIR=$(sed -n '2p' "$PATHS_FILE" | tr -d '\r')
-
-    # If sync_dir is empty or doesn't exist, fall back to rime_dir
     if [ -z "$SYNC_DIR" ] || [ ! -d "$SYNC_DIR" ]; then
-        if [ -n "$RIME_DIR" ] && [ -d "$RIME_DIR" ]; then
-            log "[cloud] sync_dir empty/invalid, falling back to rime_dir: $RIME_DIR"
-            SYNC_DIR="$RIME_DIR"
-        fi
+        [ -n "$RIME_DIR" ] && [ -d "$RIME_DIR" ] && SYNC_DIR="$RIME_DIR"
     fi
 fi
 
 if [ -z "$SYNC_DIR" ] || [ ! -d "$SYNC_DIR" ]; then
     log "[cloud] ERROR: No valid sync directory."
-    log "[cloud]   rime paths file: $([ -f "$PATHS_FILE" ] && cat "$PATHS_FILE" || echo 'NOT FOUND')"
-    log "[cloud]   Hint: launch fcitx5 at least once after installing the LSPosed module,"
-    log "[cloud]     so the hook can detect and export the rime/sync paths."
+    log "[cloud]   paths file: $([ -f "$PATHS_FILE" ] && cat "$PATHS_FILE" || echo 'NOT FOUND')"
+    log "[cloud]   Hint: launch fcitx5 at least once after installing the LSPosed module."
     exit 1
 fi
 log "[cloud] Local source: $SYNC_DIR"
@@ -169,15 +144,12 @@ log "[cloud] Local source: $SYNC_DIR"
 # ═══════════════════════════════════════════════════════════════
 #  Phase 5: Detect device name
 # ═══════════════════════════════════════════════════════════════
-# Priority: 1) JSON config  2) installation.yaml  3) dir matching  4) getprop
 DEVICE_NAME=$(json_get "$JSON_CONFIG" "device_name")
-
 # Fallback: installation.yaml
 if [ -z "$DEVICE_NAME" ] && [ -n "$RIME_DIR" ] && [ -f "$RIME_DIR/installation.yaml" ]; then
     DEVICE_NAME=$(sed -n 's/.*device_id:[[:space:]]*"\?\([^"#[:space:]]*\)"\?.*/\1/p' "$RIME_DIR/installation.yaml" | tr -d '\r')
 fi
-
-# Fallback: match local sync dirs against device codename
+# Fallback: match local sync dirs
 if [ -z "$DEVICE_NAME" ] && [ -d "$SYNC_DIR" ]; then
     DEVICE_CODENAME=$(getprop ro.product.device)
     for d in "$SYNC_DIR"/*; do
@@ -188,27 +160,21 @@ if [ -z "$DEVICE_NAME" ] && [ -d "$SYNC_DIR" ]; then
         case "$dn_lower" in "$dc_lower"*) DEVICE_NAME="$dn"; break ;; esac
     done
 fi
-
-# Final fallback
 [ -z "$DEVICE_NAME" ] && DEVICE_NAME="$(getprop ro.product.device)"
 log "[cloud] Device name: $DEVICE_NAME"
 
 LOCAL_DEVICE_DIR="$SYNC_DIR/$DEVICE_NAME"
-if [ ! -d "$LOCAL_DEVICE_DIR" ]; then
-    log "[cloud] WARNING: local device dir not found: $LOCAL_DEVICE_DIR"
-fi
+[ ! -d "$LOCAL_DEVICE_DIR" ] && log "[cloud] WARNING: local device dir not found: $LOCAL_DEVICE_DIR"
 
 # ═══════════════════════════════════════════════════════════════
-#  Phase 6: Validate rclone config and remote
+#  Phase 6: Validate rclone config
 # ═══════════════════════════════════════════════════════════════
 if [ ! -f "$RCLONE_CONFIG_PATH" ] || [ ! -s "$RCLONE_CONFIG_PATH" ]; then
     log "[cloud] ERROR: rclone.conf not found at $RCLONE_CONFIG_PATH"
-    log "[cloud]   Hint: edit rime_sync.json (rclone_config field) or copy rclone.conf manually."
+    log "[cloud]   Hint: copy your rclone.conf to ${SYNC_DATA_DIR}/rclone.conf"
     exit 1
 fi
-log "[cloud] rclone config: $RCLONE_CONFIG_PATH"
 
-# Extract first remote name from rclone.conf
 REMOTE_NAME=$(sed -n 's/^\[\([^]]*\)\]/\1/p' "$RCLONE_CONFIG_PATH" | tr -d '\r' | head -1)
 if [ -z "$REMOTE_NAME" ]; then
     log "[cloud] ERROR: No remote found in rclone.conf"
@@ -223,29 +189,23 @@ log "[cloud] Full remote: $RCLONE_REMOTE_FULL"
 #  Phase 7: Two-step rclone sync (upload → download)
 # ═══════════════════════════════════════════════════════════════
 mkdir -p "$RCLONE_CACHE"
-
 export HOME="$RCLONE_CACHE"
 export TMPDIR="$RCLONE_CACHE"
 
 DRY_FLAG=""
 [ -n "$DRY_RUN" ] && DRY_FLAG="--dry-run"
-
 FINAL_EXIT=0
 
-# ── Step A: Upload this device's data ──────────────────────
+# ── Step A: Upload ────────────────────────────────────────
 if [ -d "$LOCAL_DEVICE_DIR" ]; then
     log "[cloud] Upload: $LOCAL_DEVICE_DIR → $RCLONE_REMOTE_FULL/$DEVICE_NAME"
     [ -n "$DRY_RUN" ] && log "[cloud] *** DRY RUN ***"
-
     "$RCLONE" sync "$LOCAL_DEVICE_DIR" "$RCLONE_REMOTE_FULL/$DEVICE_NAME" \
         --config "$RCLONE_CONFIG_PATH" \
         --create-empty-src-dirs \
-        --no-check-certificate \
-        --timeout 30s \
-        --log-file "$LOG" \
-        --log-level INFO \
-        $DRY_FLAG \
-        >> "$LOG" 2>&1
+        --no-check-certificate --timeout 30s \
+        --log-file "$LOG" --log-level INFO \
+        $DRY_FLAG >> "$LOG" 2>&1
     EC=$?
     if [ $EC -eq 0 ]; then
         log "[cloud] Upload done ✓"
@@ -257,20 +217,16 @@ else
     log "[cloud] Upload skipped (no local device dir)"
 fi
 
-# ── Step B: Download other devices' data ───────────────────
+# ── Step B: Download ──────────────────────────────────────
 log "[cloud] Download: $RCLONE_REMOTE_FULL → $SYNC_DIR (excluding $DEVICE_NAME)"
 [ -n "$DRY_RUN" ] && log "[cloud] *** DRY RUN ***"
-
 "$RCLONE" sync "$RCLONE_REMOTE_FULL" "$SYNC_DIR" \
     --config "$RCLONE_CONFIG_PATH" \
     --create-empty-src-dirs \
-    --no-check-certificate \
-    --timeout 30s \
-    --log-file "$LOG" \
-    --log-level INFO \
+    --no-check-certificate --timeout 30s \
+    --log-file "$LOG" --log-level INFO \
     --exclude "$DEVICE_NAME/**" \
-    $DRY_FLAG \
-    >> "$LOG" 2>&1
+    $DRY_FLAG >> "$LOG" 2>&1
 EC=$?
 if [ $EC -eq 0 ]; then
     log "[cloud] Download done ✓"
@@ -279,12 +235,11 @@ else
     [ $FINAL_EXIT -eq 0 ] && FINAL_EXIT=$EC
 fi
 
-# ── Report ─────────────────────────────────────────────────
+# ── Report ────────────────────────────────────────────────
 if [ $FINAL_EXIT -eq 0 ]; then
     log "[cloud] Cloud sync completed successfully ✓"
 else
     log "[cloud] Cloud sync finished with errors (exit=$FINAL_EXIT)"
-    log "[cloud] Check log for details: $LOG"
 fi
 
 log "=== Finished (exit=$FINAL_EXIT) ==="

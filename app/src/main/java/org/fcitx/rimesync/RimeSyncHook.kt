@@ -112,8 +112,21 @@ class RimeSyncHook : XposedModule() {
         }
     }
 
+    /**
+     * Writes rime_paths.txt and ensures default rime_sync.json exist
+     * under fcitx5's own external files dir — no cross-process broadcast needed.
+     * Shell scripts read these via root.
+     */
     private fun exportSyncDirFromRimeConfig(appContext: Context) {
         try {
+            // fcitx5's external files dir (readable by shell scripts via root)
+            val syncDataDir = java.io.File(
+                appContext.getExternalFilesDir(null)?.absolutePath ?: return,
+                "rime_sync"
+            )
+            syncDataDir.mkdirs()
+
+            // Locate rime installation.yaml
             val rimeDirs = listOf(
                 "/data/data/org.fcitx.fcitx5.android/files/data/rime",
                 "/sdcard/Android/data/org.fcitx.fcitx5.android/files/data/rime",
@@ -127,14 +140,24 @@ class RimeSyncHook : XposedModule() {
                     val syncDir = pattern.find(content)?.groupValues?.get(1) ?: continue
                     val expanded = if (syncDir.startsWith("~/")) syncDir.replaceFirst("~", "/sdcard") else syncDir
 
-                    val intent = Intent(SyncPathReceiver.ACTION).apply {
-                        // Explicit component: bypasses Android 8+ stopped-state restriction
-                        setClassName("org.fcitx.rimesync", "org.fcitx.rimesync.SyncPathReceiver")
-                        putExtra(SyncPathReceiver.EXTRA_RIME_DIR, dir)
-                        putExtra(SyncPathReceiver.EXTRA_SYNC_DIR, expanded)
+                    // Write paths file
+                    java.io.File(syncDataDir, CloudSyncHelper.PATH_FILE)
+                        .writeText("$dir\n$expanded")
+                    Log.i(TAG, "Wrote paths: rime=$dir sync=$expanded to $syncDataDir")
+
+                    // Ensure default JSON config exists
+                    val configFile = java.io.File(syncDataDir, CloudSyncHelper.CONFIG_FILE)
+                    if (!configFile.exists()) {
+                        val defaultJson = """
+{
+  "remote_path": "rime/",
+  "rclone_config": "${syncDataDir.absolutePath}/rclone.conf",
+  "device_name": ""
+}
+                        """.trimIndent() + "\n"
+                        configFile.writeText(defaultJson)
+                        Log.i(TAG, "Wrote default config to ${configFile.absolutePath}")
                     }
-                    appContext.sendBroadcast(intent)
-                    Log.i(TAG, "Exported: rime=$dir sync=$expanded")
                     return
                 }
             }

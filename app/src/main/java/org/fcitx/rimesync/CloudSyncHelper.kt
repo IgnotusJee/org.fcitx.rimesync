@@ -6,77 +6,39 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Shared constants and path/config utilities.
+ * Paths and config utilities.
  *
- * The LSPosed hook (RimeSyncHook) reads fcitx5's installation.yaml and broadcasts
- * rime/sync dirs to SyncPathReceiver, which writes them to [PATH_FILE].
- * Shell scripts then consume [PATH_FILE] and the JSON config to perform sync.
+ * All sync data lives under fcitx5's external files dir:
+ *   /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/
+ *
+ * Files are written directly by the LSPosed hook (runs in fcitx5 process)
+ * and consumed by shell scripts via root access. No cross-process IPC needed.
  */
 object CloudSyncHelper {
 
     private const val TAG = "CloudSyncHelper"
 
-    /** File that SyncPathReceiver writes rime + sync paths into. */
     const val PATH_FILE = "rime_paths.txt"
-
-    /** JSON config file name (resolved from well-known locations). */
     const val CONFIG_FILE = "rime_sync.json"
 
-    // ── Config file resolution ──────────────────────────────────────────
+    /** fcitx5's external files dir, resolved at runtime. */
+    private const val FCITX5_FILES = "/storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files"
 
-    /**
-     * Returns the config file (app-private dir, editable via root).
-     * Default config is auto-created if missing.
-     */
-    fun resolveConfigFile(context: Context): File {
-        val local = File(context.filesDir, CONFIG_FILE)
-        if (!local.exists()) {
-            try {
-                local.writeText(defaultConfig(context))
-                Log.i(TAG, "Wrote default config to ${local.absolutePath}")
-            } catch (e: Exception) {
-                Log.w(TAG, "Cannot write default config: ${e.message}")
-            }
-        }
-        return local
-    }
+    /** Directory where hook writes and shell scripts read sync data. */
+    val SYNC_DATA_DIR = "$FCITX5_FILES/rime_sync"
 
-    // ── JSON config model ───────────────────────────────────────────────
-
-    data class SyncConfig(
-        val remotePath: String,
-        val rcloneConfig: String,
-        val deviceName: String,
-    )
-
-    fun loadSyncConfig(context: Context): SyncConfig {
-        val file = resolveConfigFile(context)
-        return try {
-            val json = JSONObject(file.readText())
-            SyncConfig(
-                remotePath = json.optString("remote_path", "rime/"),
-                rcloneConfig = json.optString("rclone_config", context.filesDir.absolutePath + "/rclone.conf"),
-                deviceName = json.optString("device_name", ""),
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse config, using defaults: ${e.message}")
-            SyncConfig(remotePath = "rime/", rcloneConfig = context.filesDir.absolutePath + "/rclone.conf", deviceName = "")
-        }
-    }
-
-    // ── Rime paths (written by SyncPathReceiver) ────────────────────────
+    // ── Rime paths (written by hook) ────────────────────────────────────
 
     data class RimePaths(val rimeDir: String, val syncDir: String)
 
-    fun getRimePaths(context: Context): RimePaths {
-        val file = File(context.filesDir, PATH_FILE)
+    fun getRimePaths(): RimePaths {
+        val file = File(SYNC_DATA_DIR, PATH_FILE)
         if (file.exists()) {
             try {
                 val lines = file.readLines()
                 val rime = lines.getOrElse(0) { "" }
                 val sync = lines.getOrElse(1) { "" }
                 if (rime.isNotEmpty() || sync.isNotEmpty()) {
-                    Log.i(TAG, "Paths: rime=$rime sync=$sync")
                     return RimePaths(rime, sync)
                 }
             } catch (e: Exception) {
@@ -86,31 +48,42 @@ object CloudSyncHelper {
         return RimePaths("", "")
     }
 
-    // ── rclone.conf helpers (for shell scripts / external consumers) ────
+    // ── JSON config (read by shell scripts) ────────────────────────────
 
-    fun getRcloneConfigPath(context: Context): String =
-        loadSyncConfig(context).rcloneConfig
+    data class SyncConfig(
+        val remotePath: String,
+        val rcloneConfig: String,
+        val deviceName: String,
+    )
 
-    fun loadRcloneConfig(context: Context): String {
-        val path = getRcloneConfigPath(context)
-        val f = File(path)
+    fun loadSyncConfig(): SyncConfig {
+        val file = File(SYNC_DATA_DIR, CONFIG_FILE)
+        return try {
+            val json = JSONObject(file.readText())
+            SyncConfig(
+                remotePath = json.optString("remote_path", "rime/"),
+                rcloneConfig = json.optString("rclone_config", "$SYNC_DATA_DIR/rclone.conf"),
+                deviceName = json.optString("device_name", ""),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse config: ${e.message}")
+            SyncConfig("rime/", "$SYNC_DATA_DIR/rclone.conf", "")
+        }
+    }
+
+    // ── rclone.conf helpers ────────────────────────────────────────────
+
+    fun getRcloneConfigPath(): String = loadSyncConfig().rcloneConfig
+
+    fun loadRcloneConfig(): String {
+        val f = File(getRcloneConfigPath())
         return if (f.exists() && f.canRead()) f.readText() else ""
     }
 
-    fun parseRemotes(context: Context): List<String> {
-        val config = loadRcloneConfig(context)
+    fun parseRemotes(): List<String> {
+        val config = loadRcloneConfig()
         if (config.isBlank()) return emptyList()
         return Regex("""^\[(\w+)]""", RegexOption.MULTILINE)
             .findAll(config).map { it.groupValues[1] }.filter { it.isNotEmpty() }.toList()
     }
-
-    // ── Default config ──────────────────────────────────────────────────
-
-    private fun defaultConfig(context: Context): String = """
-{
-  "remote_path": "rime/",
-  "rclone_config": "${context.filesDir.absolutePath}/rclone.conf",
-  "device_name": ""
-}
-    """.trimIndent() + "\n"
 }

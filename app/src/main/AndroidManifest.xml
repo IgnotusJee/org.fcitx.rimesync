@@ -1,18 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <application
-        android:allowBackup="false"
-        android:supportsRtl="true">
+    <!-- LSPosed module: no components needed. Hook runs in fcitx5 process.
+         Config is written to fcitx5's external files dir via the hook directly. -->
 
-        <receiver
-            android:name="org.fcitx.rimesync.SyncPathReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="org.fcitx.rimesync.STORE_PATHS" />
-            </intent-filter>
-        </receiver>
-
-    </application>
+    <application android:allowBackup="false" />
 
 </manifest>
