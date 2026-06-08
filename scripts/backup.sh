@@ -235,6 +235,23 @@ else
     [ $FINAL_EXIT -eq 0 ] && FINAL_EXIT=$EC
 fi
 
+# ═══════════════════════════════════════════════════════════════
+#  Phase 8: Final local sync (pick up downloaded data)
+# ═══════════════════════════════════════════════════════════════
+if [ "$MODE" != "local" ]; then
+    log "[local] Final sync to load downloaded data..."
+    if ! am broadcast \
+        -a "$BROADCAST_ACTION" \
+        -p "$BROADCAST_TARGET" \
+        --receiver-foreground \
+        >/dev/null 2>&1; then
+        log "[local] WARNING: final sync broadcast may have failed"
+    fi
+    log "[local] Waiting 15s for sync to flush..."
+    sleep 15
+    log "[local] Final sync done."
+fi
+
 # ── Report ────────────────────────────────────────────────
 if [ $FINAL_EXIT -eq 0 ]; then
     log "[cloud] Cloud sync completed successfully ✓"

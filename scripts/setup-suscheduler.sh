@@ -52,9 +52,8 @@ fi
 # ── Check su-scheduler ──────────────────────────────────────
 SU_SCHED=""
 for candidate in \
-    "/data/adb/modules/su_scheduler/system/bin/su-scheduler" \
-    "/data/adb/modules/su-scheduler/system/bin/su-scheduler" \
-    "su-scheduler"; do
+    "su-scheduler"\
+    "/data/adb/modules/su-scheduler/system/bin/su-scheduler" ; do
     if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
         SU_SCHED="$candidate"
         break
@@ -80,7 +79,7 @@ echo ""
 echo "Cleaning old rime-sync jobs..."
 "$SU_SCHED" list 2>/dev/null | while read -r line; do
     case "$line" in
-        *backup.sh*|*rime*|*rimesync*|*rime-sync*)
+        *backup.sh*|*rimesync*|*rime-sync*)
             id=$(echo "$line" | awk '{print $1}')
             if [ -n "$id" ] && [ "$id" != "ID" ]; then
                 "$SU_SCHED" remove "$id" 2>/dev/null && echo "  Removed job $id"
