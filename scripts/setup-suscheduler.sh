@@ -9,9 +9,13 @@
 # 5. su-scheduler test
 #
 # Usage:
-#   sh setup-suscheduler.sh             # default 20:00
-#   sh setup-suscheduler.sh 08:00       # 8:00 AM
-#   sh setup-suscheduler.sh 2230        # 10:30 PM
+#   sh setup-suscheduler.sh                 # default 20:00
+#   sh setup-suscheduler.sh 08:00           # 8:00 AM
+#   sh setup-suscheduler.sh 2230 --no-dry-run --no-test
+#
+# Flags:
+#   --no-dry-run   Skip the dry-run test
+#   --no-test      Skip su-scheduler self-test
 # ============================================================
 
 set -u
@@ -19,7 +23,24 @@ set -u
 BACKUP_SRC="${0%/*}/backup.sh"
 SCRIPT_DIR="/sdcard/Scripts"
 BACKUP_DST="${SCRIPT_DIR}/rime_backup.sh"
-TIME="${1:-2000}"  # default 20:00
+
+# ── Parse args ─────────────────────────────────────────────────
+TIME=""
+DRY_RUN=true
+RUN_TEST=true
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-dry-run) DRY_RUN=false ;;
+        --no-test)    RUN_TEST=false ;;
+        *)
+            # Anything else is treated as the time
+            if [ -z "$TIME" ]; then TIME="$arg"; fi
+            ;;
+    esac
+done
+
+[ -z "$TIME" ] && TIME="2000"  # default 20:00
 
 # Normalize time: HH:MM → HHMM
 TIME=$(echo "$TIME" | tr -d ':')
@@ -44,7 +65,7 @@ echo ""
 # ═══════════════════════════════════════════════════════════════
 #  Step 1: Check root
 # ═══════════════════════════════════════════════════════════════
-echo "[1/5] Checking root..."
+echo "[1] Checking root..."
 if [ "$(id -u)" != "0" ] && [ "$KSU" != "true" ] && [ "$APATCH" != "true" ]; then
     echo "  ERROR: Root required. Run as: su -c 'sh $0 $*'"
     exit 1
@@ -55,7 +76,7 @@ echo "  ✓ root OK"
 #  Step 2: Find su-scheduler
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "[2/5] Checking su-scheduler..."
+echo "[2] Checking su-scheduler..."
 SU_SCHED=""
 for p in /data/adb/modules/su_scheduler/system/bin/su-scheduler \
          /data/adb/modules/su-scheduler/system/bin/su-scheduler; do
@@ -75,7 +96,7 @@ echo "  ✓ $SU_SCHED"
 #  Step 3: Copy backup script
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "[3/5] Installing backup script..."
+echo "[3] Installing backup script..."
 mkdir -p "$SCRIPT_DIR"
 
 if [ ! -f "$BACKUP_SRC" ]; then
@@ -91,26 +112,31 @@ echo "  ✓ $BACKUP_DST"
 # ═══════════════════════════════════════════════════════════════
 #  Step 4: Dry-run test
 # ═══════════════════════════════════════════════════════════════
-echo ""
-echo "[4/5] Dry-run test..."
-echo "─────────────────────────────────────────────"
-DRY_OUTPUT=$(sh "$BACKUP_DST" --full-sync --dry-run 2>&1)
-DRY_EXIT=$?
-echo "$DRY_OUTPUT" | while read -r line; do echo "  $line"; done
-echo "─────────────────────────────────────────────"
-if [ $DRY_EXIT -ne 0 ]; then
-    echo "  WARNING: dry-run exit code = $DRY_EXIT"
-    echo "  Check: rclone binary? rclone.conf? paths?"
-    echo "  Continuing with registration anyway..."
+if $DRY_RUN; then
+    echo ""
+    echo "[4] Dry-run test..."
+    echo "─────────────────────────────────────────────"
+    DRY_OUTPUT=$(sh "$BACKUP_DST" --full-sync --dry-run 2>&1)
+    DRY_EXIT=$?
+    echo "$DRY_OUTPUT" | while read -r line; do echo "  $line"; done
+    echo "─────────────────────────────────────────────"
+    if [ $DRY_EXIT -ne 0 ]; then
+        echo "  WARNING: dry-run exit code = $DRY_EXIT"
+        echo "  Check: rclone binary? rclone.conf? paths?"
+        echo "  Continuing with registration anyway..."
+    else
+        echo "  ✓ dry-run passed"
+    fi
+    echo ""
 else
-    echo "  ✓ dry-run passed"
+    echo ""
+    echo "[4] Dry-run test: SKIPPED"
 fi
-echo ""
 
 # ═══════════════════════════════════════════════════════════════
 #  Step 5: Register with su-scheduler
 # ═══════════════════════════════════════════════════════════════
-echo "[5/5] Registering scheduled job..."
+echo "[5] Registering scheduled job..."
 
 # Clean old rime-sync jobs
 "$SU_SCHED" list 2>/dev/null | while read -r line; do
@@ -130,11 +156,16 @@ SYNC_CMD="sh ${BACKUP_DST} --full-sync; : --notify-end"
 echo "  ✓ Registered: ${TIME} daily → sh ${BACKUP_DST} --full-sync"
 
 # ── su-scheduler test ────────────────────────────────────────
-echo ""
-echo "Running su-scheduler self-test..."
-"$SU_SCHED" test 2>&1 | while read -r line; do
-    echo "  $line"
-done
+if $RUN_TEST; then
+    echo ""
+    echo "Running su-scheduler self-test..."
+    "$SU_SCHED" test 2>&1 | while read -r line; do
+        echo "  $line"
+    done
+else
+    echo ""
+    echo "su-scheduler test: SKIPPED"
+fi
 
 # ── Summary ──────────────────────────────────────────────────
 echo ""
