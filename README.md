@@ -1,54 +1,56 @@
 # Rime Sync Scheduler
 
-LSPosed 模块，为 fcitx5-android 提供 Rime 本地 + 云端定时同步。
+[中文版](README_CN.md)
 
-## 工作原理
+LSPosed module for fcitx5-android: automated local + cloud Rime sync scheduling.
+
+## How It Works
 
 ```
-fcitx5 启动
-  └─ LSPosed hook 注入
-       ├─ 读取 installation.yaml → 写入 rime_paths.txt + rime_sync.json
-       └─ 注册 TRIGGER_RIME_SYNC 广播接收器
+fcitx5 launch
+  └─ LSPosed hook injected
+       ├─ Reads installation.yaml → writes rime_paths.txt + rime_sync.json
+       └─ Registers TRIGGER_RIME_SYNC broadcast receiver
 
-su-scheduler 定时触发 (每天 20:00)
+su-scheduler fires daily (20:00)
   └─ backup.sh
-       ├─ 1. 本地同步 (广播触发 Rime sync)
-       ├─ 2. 上传本设备数据 (rclone sync → 远程)
-       ├─ 3. 下载其他设备数据 (rclone sync ← 远程)
-       └─ 4. 最终本地同步 (让 fcitx5 加载新数据)
+       ├─ 1. Local sync (broadcast triggers Rime sync)
+       ├─ 2. Upload this device (rclone sync → remote)
+       ├─ 3. Download other devices (rclone sync ← remote)
+       └─ 4. Final local sync (fcitx5 loads new data)
 ```
 
-## 前提条件
+## Prerequisites
 
 - Android 8.0+ (arm64)
 - Root (KernelSU / APatch / Magisk)
-- [LSPosed](https://github.com/JingMatrix/LSPosed) 框架
-- [fcitx5-android](https://github.com/fcitx5-android/fcitx5-android) 输入法
-- [rclone](https://rclone.org/) 二进制文件
-- [Su Scheduler](https://github.com/rexackermann/su-scheduler) 模块（定时任务）
+- [LSPosed](https://github.com/JingMatrix/LSPosed) framework
+- [fcitx5-android](https://github.com/fcitx5-android/fcitx5-android) IME
+- [rclone](https://rclone.org/) binary (arm64)
+- [Su Scheduler](https://github.com/rexackermann/su-scheduler) module
 
-## 安装
+## Install
 
-### 1. 编译
+### 1. Build
 
 ```sh
 ./gradlew assembleDebug
-# 输出: app/build/outputs/apk/debug/app-debug.apk
+# output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### 2. 安装模块
+### 2. Activate module
 
-在 LSPosed 管理器中启用本模块，作用域选择 `fcitx5-android`。
+Enable in LSPosed Manager, scope: `fcitx5-android`.
 
-### 3. 准备 rclone
+### 3. Prepare rclone
 
-将 arm64 版 rclone 二进制放入：
+Place the arm64 rclone binary at:
 
 ```
 /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/rclone_bin/rclone
 ```
 
-并创建 rclone 配置（同目录 `rclone.conf`）：
+Create rclone config (same directory, `rclone.conf`):
 ```ini
 [myremote]
 type = s3
@@ -58,17 +60,18 @@ access_key_id = ...
 secret_access_key = ...
 ```
 
-### 4. 配置
+### 4. Config
 
-fcitx5 启动后，hook 自动在以下目录生成配置文件：
+After fcitx5 starts, the hook auto-generates config files at:
+
 ```
 /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/
-├── rime_paths.txt    # Rime/sync 目录路径（自动）
-├── rime_sync.json    # 同步配置（首次自动生成默认值）
-└── rclone.conf       # rclone 远端配置（需手动放入）
+├── rime_paths.txt    # Rime/sync directory paths (auto)
+├── rime_sync.json    # Sync config (auto-generated with defaults)
+└── rclone.conf       # rclone remote config (place manually)
 ```
 
-`rime_sync.json` 示例：
+`rime_sync.json` example:
 ```json
 {
   "remote_path": "Rime/",
@@ -77,70 +80,70 @@ fcitx5 启动后，hook 自动在以下目录生成配置文件：
 }
 ```
 
-| 字段 | 说明 |
+| Field | Description |
 |---|---|
-| `remote_path` | 远程存储上的子路径 |
-| `rclone_config` | rclone 配置文件路径 |
-| `device_name` | 设备名（留空则从 `installation.yaml` 自动提取） |
+| `remote_path` | Sub-path on remote storage |
+| `rclone_config` | Path to rclone config file |
+| `device_name` | Device name (leave empty to auto-detect from `installation.yaml`) |
 
-### 5. 注册定时任务
+### 5. Schedule
 
 ```sh
-# Push 脚本
+# Push scripts
 adb push scripts/backup.sh scripts/setup-suscheduler.sh /data/local/tmp/
 
-# 安装 Su Scheduler 后，运行 setup（默认每晚 20:00）
+# Install Su Scheduler, then run setup (defaults to 20:00 daily)
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh"
 
-# 自定义时间
+# Custom time
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh 06:00"
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh 2230"
 
-# 跳过 dry-run 或 test
+# Skip dry-run or test
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh --no-dry-run --no-test"
 ```
 
-## 手动同步
+## Manual Sync
 
 ```sh
-# 完整同步 (本地 → 云端上传 → 云端下载 → 本地加载)
+# Full sync (local → upload → download → local load)
 su -c "sh /sdcard/Scripts/rime_backup.sh --full-sync"
 
-# 仅云端同步
+# Cloud only
 su -c "sh /sdcard/Scripts/rime_backup.sh --cloud-only"
 
-# 仅本地同步
+# Local only
 su -c "sh /sdcard/Scripts/rime_backup.sh --local-only"
 
-# 预览模式 (不实际修改)
+# Preview (no changes)
 su -c "sh /sdcard/Scripts/rime_backup.sh --full-sync --dry-run"
 ```
 
-或通过广播触发本地同步：
+Or trigger local sync via broadcast:
 ```sh
 am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC -p org.fcitx.fcitx5.android --receiver-foreground
 ```
 
-## 管理定时任务
+## Manage Schedule
 
 ```sh
-su -c su-scheduler list          # 查看任务
-su -c su-scheduler log           # 执行日志
-su -c su-scheduler remove <id>   # 删除任务
+su -c su-scheduler list          # list jobs
+su -c su-scheduler log           # view log
+su -c su-scheduler remove <id>   # remove job
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 rime-sync-scheduler/
 ├── app/src/main/java/org/fcitx/rimesync/
-│   ├── RimeSyncHook.kt        # LSPosed hook (注入 fcitx5 进程)
-│   └── CloudSyncHelper.kt     # 路径/配置读取工具
+│   ├── RimeSyncHook.kt        # LSPosed hook (injects into fcitx5)
+│   └── CloudSyncHelper.kt     # Path/config utilities
 ├── scripts/
-│   ├── backup.sh              # 同步脚本 (本地 + 云端)
-│   └── setup-suscheduler.sh   # Su Scheduler 安装脚本
-├── rime_sync.json             # 配置模板
-└── module.prop                # 模块描述
+│   ├── backup.sh              # Sync script (local + cloud)
+│   └── setup-suscheduler.sh   # Su Scheduler setup script
+├── rime_sync.json             # Config template
+└── module.prop                # Module descriptor
 ```
 
 ## License
