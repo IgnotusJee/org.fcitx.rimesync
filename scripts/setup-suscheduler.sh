@@ -5,13 +5,13 @@
 # Registers scheduled jobs via Su Scheduler that:
 #   1. Trigger Rime local sync (via broadcast to LSPosed hook)
 #   2. Wait for sync to complete
-#   3. Run rclone bisync to remote storage
+#   3. Run rclone sync to remote storage (upload + download)
 #
 # Prerequisites:
 #   - KernelSU / APatch / Magisk (root)
 #   - Su Scheduler module installed
 #   - This LSPosed module installed and enabled for fcitx5-android
-#   - rclone configured via the app's UI
+#   - rclone.conf placed in fcitx5's rime_sync dir (see backup.sh)
 #
 # Usage: sh setup-suscheduler.sh [--dry-run]
 # ============================================================
