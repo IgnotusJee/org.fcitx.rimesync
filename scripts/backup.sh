@@ -6,6 +6,9 @@
 # and cloud sync (two-step rclone sync to remote storage).
 # Step A: upload this device's data; Step B: download other devices.
 #
+# Config: /data/data/org.fcitx.rimesync/files/rime_sync.json
+#   { "remote_path": "rime/", "rclone_config": "/data/data/org.fcitx.rimesync/files/rclone.conf", "device_name": "" }
+#
 # Modes (flags):
 #   --full-sync    Trigger local sync first, then cloud sync
 #   --cloud-only   Cloud sync only (skip local trigger)
@@ -13,19 +16,19 @@
 #   --dry-run      rclone dry-run (preview only, no changes)
 #
 # Usage:
-#   sh backup.sh --full-sync          # full automated sync
-#   sh backup.sh --cloud-only         # cloud only
-#   sh backup.sh --local-only         # local only
-#   sh backup.sh --full-sync --dry-run  # preview
+#   sh backup.sh --full-sync
+#   sh backup.sh --cloud-only
+#   sh backup.sh --local-only
+#   sh backup.sh --full-sync --dry-run
 # ============================================================
 
-# ── Paths (app data) ────────────────────────────────────────
+# ── Paths ───────────────────────────────────────────────────
 APP_DATA="/data/data/org.fcitx.rimesync"
 PATHS_FILE="${APP_DATA}/files/rime_paths.txt"
-RCLONE_CONFIG_APP="${APP_DATA}/files/rclone.conf"
-RCLONE_CONFIG_EXT="/sdcard/rclone.conf"
-RCLONE_BIN_APP="${APP_DATA}/files/rclone_bin/rclone"
-PREFS_XML="${APP_DATA}/shared_prefs/rclone_prefs.xml"
+
+# JSON config — app private dir (edit via root: /data/data/org.fcitx.rimesync/files/rime_sync.json)
+JSON_CONFIG="${APP_DATA}/files/rime_sync.json"
+
 RCLONE_CACHE="/data/local/tmp/rclone_cache"
 
 # ── Logging ─────────────────────────────────────────────────
@@ -36,6 +39,17 @@ LOG="${MODDIR}/sync.log"
 # ── Broadcast constants ─────────────────────────────────────
 BROADCAST_ACTION="org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC"
 BROADCAST_TARGET="org.fcitx.fcitx5.android"
+
+# ═══════════════════════════════════════════════════════════════
+#  JSON helpers (no jq dependency — pure sed/grep)
+# ═══════════════════════════════════════════════════════════════
+# Usage: json_get <file> <key>
+# Returns the string value for the given key from a flat JSON object.
+json_get() {
+    local file="$1" key="$2"
+    # Match: "key": "value" — handles escaped quotes minimally
+    sed -n 's/.*"'"$key"'"\s*:\s*"\([^"]*\)".*/\1/p' "$file" | head -1
+}
 
 # ═══════════════════════════════════════════════════════════════
 #  Logging helper
@@ -71,10 +85,6 @@ log "=== Starting (mode=$MODE) ==="
 # ═══════════════════════════════════════════════════════════════
 if [ "$MODE" = "full" ] || [ "$MODE" = "local" ]; then
     log "[local] Sending Rime sync broadcast..."
-    # IMPORTANT: Dynamic receivers (registered via registerReceiver) match by
-    # ACTION + PACKAGE, NOT by component name. Use -p (not -n) to restrict
-    # delivery to the fcitx5 package. --receiver-foreground adds
-    # FLAG_RECEIVER_FOREGROUND so the broadcast reaches background receivers.
     if ! am broadcast \
         -a "$BROADCAST_ACTION" \
         -p "$BROADCAST_TARGET" \
@@ -92,33 +102,51 @@ fi
 #  Phase 2: Find rclone binary
 # ═══════════════════════════════════════════════════════════════
 RCLONE=""
-if [ -x "$RCLONE_BIN_APP" ]; then
-    RCLONE="$RCLONE_BIN_APP"
-elif command -v rclone >/dev/null 2>&1; then
+if command -v rclone >/dev/null 2>&1; then
     RCLONE="$(command -v rclone)"
 else
-    # last resort: check common module paths
     for p in /data/adb/modules/rclone-binary/system/bin/rclone \
-             /data/adb/modules/rclone/system/bin/rclone; do
+             /data/adb/modules/rclone/system/bin/rclone \
+             /data/adb/modules/rime-sync-scheduler/rclone \
+             /data/local/tmp/rime_sync_rclone; do
         [ -x "$p" ] && { RCLONE="$p"; break; }
     done
 fi
 
 if [ -z "$RCLONE" ]; then
     log "[cloud] ERROR: rclone binary not found."
-    log "[cloud] Hint: open the Rime Sync Scheduler app once to auto-download rclone,"
-    log "[cloud]   or install a rclone module for KernelSU/APatch."
+    log "[cloud] Install a rclone module for KernelSU/APatch/Magisk,"
+    log "[cloud]   or place rclone at /data/local/tmp/rime_sync_rclone"
     exit 1
 fi
 log "[cloud] rclone binary: $RCLONE"
 
 # ═══════════════════════════════════════════════════════════════
-#  Phase 3: Read local sync directory
+#  Phase 3: Load JSON config
+# ═══════════════════════════════════════════════════════════════
+if [ ! -f "$JSON_CONFIG" ]; then
+    log "[cloud] WARNING: rime_sync.json not found at $JSON_CONFIG, using defaults."
+    log "[cloud]   Config auto-created on first app launch, or edit manually via root."
+fi
+
+REMOTE_SUB_PATH=$(json_get "$JSON_CONFIG" "remote_path")
+[ -z "$REMOTE_SUB_PATH" ] && REMOTE_SUB_PATH="rime/"
+# Remove leading slash for rclone compatibility
+REMOTE_SUB_PATH="${REMOTE_SUB_PATH#/}"
+log "[cloud] Remote sub-path (from config): $REMOTE_SUB_PATH"
+
+RCLONE_CONFIG_PATH=$(json_get "$JSON_CONFIG" "rclone_config")
+[ -z "$RCLONE_CONFIG_PATH" ] && RCLONE_CONFIG_PATH="${APP_DATA}/files/rclone.conf"
+log "[cloud] rclone config path: $RCLONE_CONFIG_PATH"
+
+# ═══════════════════════════════════════════════════════════════
+#  Phase 4: Read local sync directory
 # ═══════════════════════════════════════════════════════════════
 SYNC_DIR=""
+RIME_DIR=""
 if [ -f "$PATHS_FILE" ]; then
-    SYNC_DIR=$(sed -n '2p' "$PATHS_FILE" | tr -d '\r')
     RIME_DIR=$(sed -n '1p' "$PATHS_FILE" | tr -d '\r')
+    SYNC_DIR=$(sed -n '2p' "$PATHS_FILE" | tr -d '\r')
 
     # If sync_dir is empty or doesn't exist, fall back to rime_dir
     if [ -z "$SYNC_DIR" ] || [ ! -d "$SYNC_DIR" ]; then
@@ -138,23 +166,30 @@ if [ -z "$SYNC_DIR" ] || [ ! -d "$SYNC_DIR" ]; then
 fi
 log "[cloud] Local source: $SYNC_DIR"
 
-# Auto-detect device name from Rime's installation.yaml
-DEVICE_NAME="${RIME_DEVICE_NAME:-}"
+# ═══════════════════════════════════════════════════════════════
+#  Phase 5: Detect device name
+# ═══════════════════════════════════════════════════════════════
+# Priority: 1) JSON config  2) installation.yaml  3) dir matching  4) getprop
+DEVICE_NAME=$(json_get "$JSON_CONFIG" "device_name")
+
+# Fallback: installation.yaml
 if [ -z "$DEVICE_NAME" ] && [ -n "$RIME_DIR" ] && [ -f "$RIME_DIR/installation.yaml" ]; then
     DEVICE_NAME=$(sed -n 's/.*device_id:[[:space:]]*"\?\([^"#[:space:]]*\)"\?.*/\1/p' "$RIME_DIR/installation.yaml" | tr -d '\r')
 fi
-# Fallback: list local sync dirs, pick one that contains this device codename
+
+# Fallback: match local sync dirs against device codename
 if [ -z "$DEVICE_NAME" ] && [ -d "$SYNC_DIR" ]; then
     DEVICE_CODENAME=$(getprop ro.product.device)
     for d in "$SYNC_DIR"/*; do
         [ -d "$d" ] || continue
         dn=$(basename "$d")
-        # case-insensitive prefix match via lowercasing both
         dn_lower=$(echo "$dn" | tr '[:upper:]' '[:lower:]')
         dc_lower=$(echo "$DEVICE_CODENAME" | tr '[:upper:]' '[:lower:]')
         case "$dn_lower" in "$dc_lower"*) DEVICE_NAME="$dn"; break ;; esac
     done
 fi
+
+# Final fallback
 [ -z "$DEVICE_NAME" ] && DEVICE_NAME="$(getprop ro.product.device)"
 log "[cloud] Device name: $DEVICE_NAME"
 
@@ -164,50 +199,28 @@ if [ ! -d "$LOCAL_DEVICE_DIR" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════
-#  Phase 4: Read rclone config
+#  Phase 6: Validate rclone config and remote
 # ═══════════════════════════════════════════════════════════════
-RCLONE_CONFIG=""
-if [ -f "$RCLONE_CONFIG_APP" ] && [ -s "$RCLONE_CONFIG_APP" ]; then
-    RCLONE_CONFIG="$RCLONE_CONFIG_APP"
-elif [ -f "$RCLONE_CONFIG_EXT" ] && [ -s "$RCLONE_CONFIG_EXT" ]; then
-    RCLONE_CONFIG="$RCLONE_CONFIG_EXT"
-else
-    log "[cloud] ERROR: rclone.conf not found."
-    log "[cloud]   App config: $RCLONE_CONFIG_APP ($([ -f "$RCLONE_CONFIG_APP" ] && echo 'exists' || echo 'missing'))"
-    log "[cloud]   Ext config: $RCLONE_CONFIG_EXT ($([ -f "$RCLONE_CONFIG_EXT" ] && echo 'exists' || echo 'missing'))"
-    log "[cloud]   Hint: use the app UI to import your rclone.conf."
+if [ ! -f "$RCLONE_CONFIG_PATH" ] || [ ! -s "$RCLONE_CONFIG_PATH" ]; then
+    log "[cloud] ERROR: rclone.conf not found at $RCLONE_CONFIG_PATH"
+    log "[cloud]   Hint: edit rime_sync.json (rclone_config field) or copy rclone.conf manually."
     exit 1
 fi
-log "[cloud] Config: $RCLONE_CONFIG"
+log "[cloud] rclone config: $RCLONE_CONFIG_PATH"
 
-# ═══════════════════════════════════════════════════════════════
-#  Phase 5: Determine remote path
-# ═══════════════════════════════════════════════════════════════
-
-# Extract first remote name from rclone.conf (strip DOS line endings \r)
-REMOTE_NAME=$(sed -n 's/^\[\([^]]*\)\]/\1/p' "$RCLONE_CONFIG" | tr -d '\r' | head -1)
+# Extract first remote name from rclone.conf
+REMOTE_NAME=$(sed -n 's/^\[\([^]]*\)\]/\1/p' "$RCLONE_CONFIG_PATH" | tr -d '\r' | head -1)
 if [ -z "$REMOTE_NAME" ]; then
     log "[cloud] ERROR: No remote found in rclone.conf"
     exit 1
 fi
 log "[cloud] Remote: $REMOTE_NAME"
 
-# Try reading remote_path from app's SharedPreferences
-REMOTE_SUB_PATH=""
-if [ -f "$PREFS_XML" ]; then
-    REMOTE_SUB_PATH=$(sed -n 's/.*<string name="remote_path">\(.*\)<\/string>.*/\1/p' "$PREFS_XML" | tr -d '\r')
-fi
-# Fallback: environment variable or default
-[ -z "$REMOTE_SUB_PATH" ] && REMOTE_SUB_PATH="${RCLONE_REMOTE_PATH:-rime/}"
-# Remove leading slash for rclone compatibility
-REMOTE_SUB_PATH="${REMOTE_SUB_PATH#/}"
-log "[cloud] Remote sub-path: $REMOTE_SUB_PATH"
-
 RCLONE_REMOTE_FULL="${REMOTE_NAME}:${REMOTE_SUB_PATH}"
 log "[cloud] Full remote: $RCLONE_REMOTE_FULL"
 
 # ═══════════════════════════════════════════════════════════════
-#  Phase 6: Two-step rclone sync (upload → download)
+#  Phase 7: Two-step rclone sync (upload → download)
 # ═══════════════════════════════════════════════════════════════
 mkdir -p "$RCLONE_CACHE"
 
@@ -225,7 +238,7 @@ if [ -d "$LOCAL_DEVICE_DIR" ]; then
     [ -n "$DRY_RUN" ] && log "[cloud] *** DRY RUN ***"
 
     "$RCLONE" sync "$LOCAL_DEVICE_DIR" "$RCLONE_REMOTE_FULL/$DEVICE_NAME" \
-        --config "$RCLONE_CONFIG" \
+        --config "$RCLONE_CONFIG_PATH" \
         --create-empty-src-dirs \
         --no-check-certificate \
         --timeout 30s \
@@ -249,7 +262,7 @@ log "[cloud] Download: $RCLONE_REMOTE_FULL → $SYNC_DIR (excluding $DEVICE_NAME
 [ -n "$DRY_RUN" ] && log "[cloud] *** DRY RUN ***"
 
 "$RCLONE" sync "$RCLONE_REMOTE_FULL" "$SYNC_DIR" \
-    --config "$RCLONE_CONFIG" \
+    --config "$RCLONE_CONFIG_PATH" \
     --create-empty-src-dirs \
     --no-check-certificate \
     --timeout 30s \

@@ -1,81 +1,70 @@
 package org.fcitx.rimesync
 
 import android.content.Context
-import android.content.SharedPreferences
-import android.net.Uri
-import android.os.Build
 import android.util.Log
-import java.io.*
-import java.util.zip.ZipInputStream
+import org.json.JSONObject
+import java.io.File
 
 /**
- * Self-contained rclone manager + rime path resolver.
- * Uses broadcast IPC to receive paths from the LSPosed hook.
+ * Shared constants and path/config utilities.
+ *
+ * The LSPosed hook (RimeSyncHook) reads fcitx5's installation.yaml and broadcasts
+ * rime/sync dirs to SyncPathReceiver, which writes them to [PATH_FILE].
+ * Shell scripts then consume [PATH_FILE] and the JSON config to perform sync.
  */
 object CloudSyncHelper {
 
     private const val TAG = "CloudSyncHelper"
-    private const val RCLONE_VERSION = "1.69.0"
-    private const val RCLONE_ZIP =
-        "https://downloads.rclone.org/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-arm64.zip"
 
-    private const val PREF_NAME = "rclone_prefs"
-    private const val PREF_BINARY_READY = "binary_ready"
-    private const val PREF_REMOTE_PATH = "remote_path"
+    /** File that SyncPathReceiver writes rime + sync paths into. */
     const val PATH_FILE = "rime_paths.txt"
 
-    fun ensureRclone(context: Context, onProgress: ((String) -> Unit)? = null): File? {
-        val binDir = File(context.filesDir, "rclone_bin"); binDir.mkdirs()
-        val bin = File(binDir, "rclone")
-        if (bin.exists() && bin.canExecute() && getPrefs(context).getBoolean(PREF_BINARY_READY, false)) return bin
+    /** JSON config file name (resolved from well-known locations). */
+    const val CONFIG_FILE = "rime_sync.json"
+
+    // ── Config file resolution ──────────────────────────────────────────
+
+    /**
+     * Returns the config file (app-private dir, editable via root).
+     * Default config is auto-created if missing.
+     */
+    fun resolveConfigFile(context: Context): File {
+        val local = File(context.filesDir, CONFIG_FILE)
+        if (!local.exists()) {
+            try {
+                local.writeText(defaultConfig(context))
+                Log.i(TAG, "Wrote default config to ${local.absolutePath}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot write default config: ${e.message}")
+            }
+        }
+        return local
+    }
+
+    // ── JSON config model ───────────────────────────────────────────────
+
+    data class SyncConfig(
+        val remotePath: String,
+        val rcloneConfig: String,
+        val deviceName: String,
+    )
+
+    fun loadSyncConfig(context: Context): SyncConfig {
+        val file = resolveConfigFile(context)
         return try {
-            onProgress?.invoke("Downloading rclone v$RCLONE_VERSION...")
-            downloadAndExtract(context, bin, onProgress)
-            bin.setExecutable(true)
-            getPrefs(context).edit().putBoolean(PREF_BINARY_READY, true).apply()
-            Log.i(TAG, "rclone installed: ${bin.absolutePath} (${bin.length()} bytes)")
-            bin
+            val json = JSONObject(file.readText())
+            SyncConfig(
+                remotePath = json.optString("remote_path", "rime/"),
+                rcloneConfig = json.optString("rclone_config", context.filesDir.absolutePath + "/rclone.conf"),
+                deviceName = json.optString("device_name", ""),
+            )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to install rclone", e)
-            onProgress?.invoke("rclone install failed: ${e.message}")
-            null
+            Log.w(TAG, "Failed to parse config, using defaults: ${e.message}")
+            SyncConfig(remotePath = "rime/", rcloneConfig = context.filesDir.absolutePath + "/rclone.conf", deviceName = "")
         }
     }
 
-    private fun downloadAndExtract(context: Context, dest: File, onProgress: ((String) -> Unit)?) {
-        val zipFile = File(context.cacheDir, "rclone.zip")
-        downloadFile(RCLONE_ZIP, zipFile) { pct -> onProgress?.invoke("Downloading rclone... $pct%") }
-        onProgress?.invoke("Extracting...")
-        ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-            var e = zis.nextEntry
-            while (e != null) {
-                if (e.name.removePrefix("./").endsWith("/rclone") || e.name == "rclone") {
-                    FileOutputStream(dest).use { zis.copyTo(it) }; break
-                }
-                e = zis.nextEntry
-            }
-        }
-        zipFile.delete()
-    }
-
-    private fun downloadFile(urlStr: String, dest: File, onProgress: ((Int) -> Unit)?) {
-        val conn = (java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection).apply {
-            connectTimeout = 30000; readTimeout = 180000
-            instanceFollowRedirects = true; setRequestProperty("User-Agent", "RimeSync/1.0")
-        }
-        val total = conn.contentLengthLong; var d = 0L; var lp = -1
-        conn.inputStream.use { input ->
-            FileOutputStream(dest).use { output ->
-                val buf = ByteArray(8192); var b = input.read(buf)
-                while (b != -1) { output.write(buf, 0, b); d += b
-                    if (total > 0) { val p = (d * 100 / total).toInt(); if (p != lp) { lp = p; onProgress?.invoke(p) } }
-                    b = input.read(buf) }
-            }
-        }
-        conn.disconnect()
-    }
-
-    // ── Rime paths (read from broadcast-written file) ──────────────────
+    // ── Rime paths (written by SyncPathReceiver) ────────────────────────
 
     data class RimePaths(val rimeDir: String, val syncDir: String)
 
@@ -90,183 +79,38 @@ object CloudSyncHelper {
                     Log.i(TAG, "Paths: rime=$rime sync=$sync")
                     return RimePaths(rime, sync)
                 }
-            } catch (e: Exception) { Log.w(TAG, "Read paths failed: ${e.message}") }
+            } catch (e: Exception) {
+                Log.w(TAG, "Read paths failed: ${e.message}")
+            }
         }
-        return RimePaths("(launch fcitx5 once)", "(launch fcitx5 once)")
+        return RimePaths("", "")
     }
 
-    // ── Config management ─────────────────────────────────────────────
+    // ── rclone.conf helpers (for shell scripts / external consumers) ────
 
-    fun getConfigFile(context: Context): File = File(context.filesDir, "rclone.conf")
+    fun getRcloneConfigPath(context: Context): String =
+        loadSyncConfig(context).rcloneConfig
 
-    fun loadConfig(context: Context): String {
-        val ext = File("/sdcard/rclone.conf")
-        if (ext.exists() && ext.canRead()) {
-            val c = ext.readText(); getConfigFile(context).writeText(c)
-            Log.i(TAG, "Loaded rclone.conf from /sdcard/")
-            return c
-        }
-        val i = getConfigFile(context)
-        return if (i.exists()) i.readText() else ""
-    }
-
-    fun saveConfig(context: Context, content: String) {
-        getConfigFile(context).writeText(content)
-        Log.i(TAG, "Saved rclone.conf")
+    fun loadRcloneConfig(context: Context): String {
+        val path = getRcloneConfigPath(context)
+        val f = File(path)
+        return if (f.exists() && f.canRead()) f.readText() else ""
     }
 
     fun parseRemotes(context: Context): List<String> {
-        val config = loadConfig(context)
+        val config = loadRcloneConfig(context)
         if (config.isBlank()) return emptyList()
         return Regex("""^\[(\w+)]""", RegexOption.MULTILINE)
             .findAll(config).map { it.groupValues[1] }.filter { it.isNotEmpty() }.toList()
     }
 
-    // ── Remote path ────────────────────────────────────────────────────
+    // ── Default config ──────────────────────────────────────────────────
 
-    fun getRemoteSyncPath(context: Context): String =
-        getPrefs(context).getString(PREF_REMOTE_PATH, "rime/") ?: "rime/"
-
-    fun setRemoteSyncPath(context: Context, path: String) {
-        getPrefs(context).edit().putString(PREF_REMOTE_PATH, path).apply()
-    }
-
-    // ── Remote browse ──────────────────────────────────────────────────
-
-    fun browseRemote(context: Context, remote: String, path: String = "",
-                     onProgress: ((String) -> Unit)? = null): List<String> {
-        val bin = ensureRclone(context, onProgress) ?: return emptyList()
-        val remotePath = if (path.isEmpty()) "$remote:" else "$remote:$path"
-        val cmd = arrayOf(bin.absolutePath, "lsd", remotePath,
-            "--config", getConfigFile(context).absolutePath, "--max-depth", "1",
-            "--no-check-certificate", "--timeout", "30s")
-        return try {
-            val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readText()
-            val ec = p.waitFor(); p.destroy()
-            if (ec != 0) {
-                onProgress?.invoke("Browse failed: ${out.takeLast(200)}")
-                return emptyList()
-            }
-            out.lines().filter { it.isNotBlank() && !it.startsWith("Failed") }
-                .mapNotNull { it.trim().split("\t").lastOrNull()?.trim()
-                    ?: it.trim().split("\\s+".toRegex()).lastOrNull() }
-                .filter { it.isNotEmpty() }
-        } catch (e: Exception) {
-            Log.e(TAG, "Browse failed", e)
-            onProgress?.invoke("Browse error: ${e.message}")
-            emptyList()
-        }
-    }
-
-    // ── Device name detection ─────────────────────────────────────────
-
-    private fun detectDeviceName(localDir: String, rimeDir: String): String {
-        // 1. Try installation.yaml (written by Rime after first sync)
-        val installYaml = File(rimeDir, "installation.yaml")
-        if (installYaml.isFile) {
-            try {
-                val idMatch = Regex("""device_id:\s*"?([^"#\s]+)""")
-                    .find(installYaml.readText())
-                idMatch?.groupValues?.get(1)?.let { return it }
-            } catch (_: Exception) {}
-        }
-        // 2. Match local dirs against device codename
-        val codename = Build.DEVICE.lowercase()
-        File(localDir).listFiles()?.forEach { f ->
-            if (f.isDirectory) {
-                val name = f.name
-                if (name.lowercase().startsWith(codename)) return name
-            }
-        }
-        // 3. Fallback: first subdirectory found, or device codename
-        File(localDir).listFiles()?.firstOrNull { it.isDirectory }?.name?.let { return it }
-        return codename
-    }
-
-    private fun runRcloneCmd(
-        bin: File, subCmd: String, src: String, dst: String,
-        configPath: String, cacheDir: String, homeDir: String,
-        logFile: String, exclude: String? = null, dryRun: Boolean = false
-    ): Int {
-        val args = mutableListOf(
-            bin.absolutePath, subCmd, src, dst,
-            "--config", configPath,
-            "--create-empty-src-dirs",
-            "--no-check-certificate", "--timeout", "30s",
-            "--log-file", logFile, "--log-level", "INFO"
-        )
-        if (exclude != null) { args.add("--exclude"); args.add(exclude) }
-        if (dryRun) args.add("--dry-run")
-
-        val pb = ProcessBuilder(args).redirectErrorStream(true)
-        pb.environment()["HOME"] = homeDir
-        pb.environment()["TMPDIR"] = cacheDir
-
-        return try {
-            val p = pb.start()
-            p.inputStream.bufferedReader().readText() // consume output
-            p.waitFor().also { p.destroy() }
-        } catch (e: Exception) {
-            Log.e(TAG, "rclone $subCmd failed", e)
-            -1
-        }
-    }
-
-    // ── Sync execution ────────────────────────────────────────────────
-
-    fun runSync(context: Context, onProgress: ((String) -> Unit)? = null): Boolean {
-        val bin = ensureRclone(context, onProgress) ?: return false
-        val paths = getRimePaths(context)
-        val localDir = paths.syncDir.ifEmpty { paths.rimeDir }
-        if (localDir.isEmpty() || localDir.startsWith("(launch")) {
-            onProgress?.invoke("Launch fcitx5 once to detect paths"); return false
-        }
-        val configFile = getConfigFile(context)
-        if (!configFile.exists() || configFile.readText().isBlank()) {
-            onProgress?.invoke("Import rclone.conf first"); return false
-        }
-        val remotes = parseRemotes(context)
-        if (remotes.isEmpty()) { onProgress?.invoke("No remotes in rclone.conf"); return false }
-        val remote = remotes.first()
-        val remoteFull = "$remote:${getRemoteSyncPath(context)}"
-        val cacheDir = File(context.cacheDir, "rclone_cache").also { it.mkdirs() }
-        val homeDir = context.filesDir.absolutePath
-        val logFile = File(context.filesDir, "rclone.log").absolutePath
-
-        val deviceName = detectDeviceName(localDir, paths.rimeDir)
-        val localDeviceDir = File(localDir, deviceName)
-        Log.i(TAG, "Device: $deviceName, local: ${localDeviceDir.absolutePath}")
-
-        // Step A: Upload this device's data
-        if (localDeviceDir.isDirectory) {
-            onProgress?.invoke("Upload: $deviceName...")
-            val ec = runRcloneCmd(bin, "sync",
-                localDeviceDir.absolutePath, "$remoteFull/$deviceName",
-                configFile.absolutePath, cacheDir.absolutePath,
-                homeDir, logFile)
-            if (ec != 0) {
-                onProgress?.invoke("Upload failed (exit $ec)")
-                return false
-            }
-            onProgress?.invoke("Upload done ✓")
-        }
-
-        // Step B: Download other devices' data
-        onProgress?.invoke("Download: other devices...")
-        val ec2 = runRcloneCmd(bin, "sync",
-            remoteFull, localDir,
-            configFile.absolutePath, cacheDir.absolutePath,
-            homeDir, logFile, exclude = "$deviceName/**")
-        if (ec2 != 0) {
-            onProgress?.invoke("Download failed (exit $ec2)")
-            return false
-        }
-
-        onProgress?.invoke("Cloud sync done ✓ ($remote)")
-        return true
-    }
-
-    private fun getPrefs(context: Context): SharedPreferences =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    private fun defaultConfig(context: Context): String = """
+{
+  "remote_path": "rime/",
+  "rclone_config": "${context.filesDir.absolutePath}/rclone.conf",
+  "device_name": ""
+}
+    """.trimIndent() + "\n"
 }

@@ -32,9 +32,6 @@ android {
 }
 
 dependencies {
-    // UI
-    implementation("androidx.appcompat:appcompat:1.7.0")
-
     // Xposed API (compileOnly - not packaged, target app provides it)
     compileOnly("io.github.libxposed:api:101.0.1")
 }

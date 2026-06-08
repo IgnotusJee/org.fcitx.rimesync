@@ -1,8 +1,9 @@
 id=rime-sync-scheduler
 name=Rime Sync Scheduler
-version=v1.1
-versionCode=2
+version=v2.0
+versionCode=3
 author=fcitx5-android user
 description=Rime local + cloud sync scheduler for fcitx5-android. \n\
-  Uses Su Scheduler for automated periodic sync. \n\
-  Manual: am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC
+  Config: /data/data/org.fcitx.rimesync/files/rime_sync.json \n\
+  Manual sync: am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC \n\
+  Cloud sync: sh /data/adb/modules/rime-sync-scheduler/backup.sh --full-sync
