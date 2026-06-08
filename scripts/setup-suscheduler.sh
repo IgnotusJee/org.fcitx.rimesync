@@ -1,139 +1,155 @@
 #!/system/bin/sh
 # ============================================================
-# rime-sync-scheduler — Su Scheduler setup script
+# rime-sync-scheduler — Su Scheduler setup
 # ============================================================
-# Registers scheduled jobs via Su Scheduler that:
-#   1. Trigger Rime local sync (via broadcast to LSPosed hook)
-#   2. Wait for sync to complete
-#   3. Run rclone sync to remote storage (upload + download)
+# 1. Check root & su-scheduler
+# 2. Copy backup.sh → /sdcard/Scripts/rime_backup.sh
+# 3. Dry-run test
+# 4. Register daily job (default 20:00, overridable)
+# 5. su-scheduler test
 #
-# Prerequisites:
-#   - KernelSU / APatch / Magisk (root)
-#   - Su Scheduler module installed
-#   - This LSPosed module installed and enabled for fcitx5-android
-#   - rclone.conf placed in fcitx5's rime_sync dir (see backup.sh)
-#
-# Usage: sh setup-suscheduler.sh [--dry-run]
+# Usage:
+#   sh setup-suscheduler.sh             # default 20:00
+#   sh setup-suscheduler.sh 08:00       # 8:00 AM
+#   sh setup-suscheduler.sh 2230        # 10:30 PM
 # ============================================================
 
-BACKUP_SCRIPT="${0%/*}/backup.sh"
-MODDIR="/data/adb/modules/rime-sync-scheduler"
+set -u
 
-# ── Ensure the backup script is reachable at standard module path ──
-if [ ! -f "$BACKUP_SCRIPT" ]; then
-    BACKUP_SCRIPT="$MODDIR/scripts/backup.sh"
-fi
-if [ ! -f "$BACKUP_SCRIPT" ]; then
-    echo "ERROR: backup.sh not found. Place this script in scripts/ alongside backup.sh"
-    exit 1
-fi
+BACKUP_SRC="${0%/*}/backup.sh"
+SCRIPT_DIR="/sdcard/Scripts"
+BACKUP_DST="${SCRIPT_DIR}/rime_backup.sh"
+TIME="${1:-2000}"  # default 20:00
 
-DRY_RUN_FLAG=""
-if [ "$1" = "--dry-run" ]; then
-    DRY_RUN_FLAG="--dry-run"
-    echo ">>> DRY RUN MODE <<<"
-fi
-
-echo "============================================"
-echo " rime-sync-scheduler — Su Scheduler setup"
-echo "============================================"
-echo ""
-
-# ── Check root ──────────────────────────────────────────────
-if [ "$KSU" != "true" ] && [ "$APATCH" != "true" ]; then
-    # Not running in module context — check for su
-    if ! command -v su >/dev/null 2>&1; then
-        echo "ERROR: Root access required."
-        echo "Run from KernelSU / APatch / Magisk context, or use 'su -c'."
+# Normalize time: HH:MM → HHMM
+TIME=$(echo "$TIME" | tr -d ':')
+# Validate
+case "$TIME" in
+    [01][0-9][0-5][0-9]|2[0-3][0-5][0-9])
+        # Valid 24h HHMM
+        ;;
+    *)
+        echo "ERROR: Invalid time '$1'. Use HHMM or HH:MM (24h format)."
+        echo "  Example: 2000  08:00  2230"
         exit 1
-    fi
-fi
+        ;;
+esac
 
-# ── Check su-scheduler ──────────────────────────────────────
-SU_SCHED=""
-for candidate in \
-    "su-scheduler"\
-    "/data/adb/modules/su-scheduler/system/bin/su-scheduler" ; do
-    if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
-        SU_SCHED="$candidate"
-        break
-    fi
-done
-
-if [ -z "$SU_SCHED" ]; then
-    echo "ERROR: su-scheduler not found."
-    echo ""
-    echo "Install Su Scheduler from:"
-    echo "  https://github.com/rexackermann/su-scheduler"
-    echo ""
-    echo "Quick install via curl:"
-    echo "  curl -L https://github.com/rexackermann/su-scheduler/releases/latest/download/su-scheduler.zip -o /sdcard/su-scheduler.zip"
-    echo "  Then flash the zip in KernelSU / APatch Manager."
-    exit 1
-fi
-echo "su-scheduler: $SU_SCHED"
-echo "backup script: $BACKUP_SCRIPT"
+echo "============================================"
+echo " rime-sync-scheduler · Su Scheduler setup"
+echo " Schedule: ${TIME} daily"
+echo "============================================"
 echo ""
 
-# ── Clean old rime-sync jobs ────────────────────────────────
-echo "Cleaning old rime-sync jobs..."
+# ═══════════════════════════════════════════════════════════════
+#  Step 1: Check root
+# ═══════════════════════════════════════════════════════════════
+echo "[1/5] Checking root..."
+if [ "$(id -u)" != "0" ] && [ "$KSU" != "true" ] && [ "$APATCH" != "true" ]; then
+    echo "  ERROR: Root required. Run as: su -c 'sh $0 $*'"
+    exit 1
+fi
+echo "  ✓ root OK"
+
+# ═══════════════════════════════════════════════════════════════
+#  Step 2: Find su-scheduler
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "[2/5] Checking su-scheduler..."
+SU_SCHED=""
+for p in /data/adb/modules/su_scheduler/system/bin/su-scheduler \
+         /data/adb/modules/su-scheduler/system/bin/su-scheduler; do
+    if [ -x "$p" ]; then SU_SCHED="$p"; break; fi
+done
+if ! command -v su-scheduler >/dev/null 2>&1 && [ -z "$SU_SCHED" ]; then
+    echo "  ERROR: su-scheduler not found."
+    echo ""
+    echo "  Install Su Scheduler:"
+    echo "    https://github.com/rexackermann/su-scheduler"
+    exit 1
+fi
+[ -z "$SU_SCHED" ] && SU_SCHED="su-scheduler"
+echo "  ✓ $SU_SCHED"
+
+# ═══════════════════════════════════════════════════════════════
+#  Step 3: Copy backup script
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "[3/5] Installing backup script..."
+mkdir -p "$SCRIPT_DIR"
+
+if [ ! -f "$BACKUP_SRC" ]; then
+    echo "  ERROR: backup.sh not found at $BACKUP_SRC"
+    echo "  Run this script from the rime-sync-scheduler scripts/ directory."
+    exit 1
+fi
+
+cp -f "$BACKUP_SRC" "$BACKUP_DST"
+chmod 755 "$BACKUP_DST"
+echo "  ✓ $BACKUP_DST"
+
+# ═══════════════════════════════════════════════════════════════
+#  Step 4: Dry-run test
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "[4/5] Dry-run test..."
+echo "─────────────────────────────────────────────"
+DRY_OUTPUT=$(sh "$BACKUP_DST" --full-sync --dry-run 2>&1)
+DRY_EXIT=$?
+echo "$DRY_OUTPUT" | while read -r line; do echo "  $line"; done
+echo "─────────────────────────────────────────────"
+if [ $DRY_EXIT -ne 0 ]; then
+    echo "  WARNING: dry-run exit code = $DRY_EXIT"
+    echo "  Check: rclone binary? rclone.conf? paths?"
+    echo "  Continuing with registration anyway..."
+else
+    echo "  ✓ dry-run passed"
+fi
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+#  Step 5: Register with su-scheduler
+# ═══════════════════════════════════════════════════════════════
+echo "[5/5] Registering scheduled job..."
+
+# Clean old rime-sync jobs
 "$SU_SCHED" list 2>/dev/null | while read -r line; do
     case "$line" in
-        *backup.sh*|*rimesync*|*rime-sync*)
+        *rime_backup*|*backup.sh*|*rime-sync*|*rimesync*)
             id=$(echo "$line" | awk '{print $1}')
             if [ -n "$id" ] && [ "$id" != "ID" ]; then
-                "$SU_SCHED" remove "$id" 2>/dev/null && echo "  Removed job $id"
+                "$SU_SCHED" remove "$id" 2>/dev/null && echo "  Removed old job $id"
             fi
             ;;
     esac
 done
 
-# ── Determine sync flags ────────────────────────────────────
-SYNC_FLAG="--full-sync"
-[ -n "$DRY_RUN_FLAG" ] && SYNC_FLAG="$SYNC_FLAG $DRY_RUN_FLAG"
+# Register new job
+SYNC_CMD="sh ${BACKUP_DST} --full-sync; : --notify-end"
+"$SU_SCHED" add "$TIME" "$SYNC_CMD"
+echo "  ✓ Registered: ${TIME} daily → sh ${BACKUP_DST} --full-sync"
 
-# ── Register boot job ───────────────────────────────────────
+# ── su-scheduler test ────────────────────────────────────────
 echo ""
-echo "Registering jobs..."
-BOOT_CMD="sh ${BACKUP_SCRIPT} ${SYNC_FLAG}"
-if [ -z "$DRY_RUN_FLAG" ]; then
-    "$SU_SCHED" add boot "$BOOT_CMD; : --notify"
-    echo "  ✓ boot — run on device startup"
-else
-    echo "  [DRY RUN] would add: boot → $BOOT_CMD"
-fi
-
-# ── Register periodic jobs (4x daily ≈ every 6 hours) ──────
-SCHEDULE_TIMES="0000 0600 1200 1800"
-PERIODIC_CMD="sh ${BACKUP_SCRIPT} ${SYNC_FLAG}"
-for t in $SCHEDULE_TIMES; do
-    if [ -z "$DRY_RUN_FLAG" ]; then
-        "$SU_SCHED" add "$t" "$PERIODIC_CMD; : --notify"
-        echo "  ✓ $t — daily at $(echo $t | sed 's/\(..\)\(..\)/\1:\2/')"
-    else
-        echo "  [DRY RUN] would add: $t → $PERIODIC_CMD"
-    fi
+echo "Running su-scheduler self-test..."
+"$SU_SCHED" test 2>&1 | while read -r line; do
+    echo "  $line"
 done
 
+# ── Summary ──────────────────────────────────────────────────
 echo ""
 echo "============================================"
 echo " Setup complete!"
 echo "============================================"
 echo ""
-if [ -z "$DRY_RUN_FLAG" ]; then
-    echo "Current jobs:"
-    echo "───────────────────────────────────────────"
-    "$SU_SCHED" list
-    echo "───────────────────────────────────────────"
-    echo ""
-    echo "Management commands:"
-    echo "  su-scheduler list              # list all jobs"
-    echo "  su-scheduler run <id>          # run a job manually"
-    echo "  su-scheduler remove <id>       # remove a job"
-    echo "  su-scheduler log               # view execution log"
-    echo ""
-    echo "To trigger immediately (test):"
-    echo "  sh $BACKUP_SCRIPT --full-sync"
-else
-    echo "Dry run complete. Remove --dry-run to apply."
-fi
+echo "  Script:   $BACKUP_DST"
+echo "  Schedule: daily at $(echo "$TIME" | sed 's/\(..\)\(..\)/\1:\2/')"
+echo ""
+echo "  Management:"
+echo "    su-scheduler list        # show jobs"
+echo "    su-scheduler log         # view log"
+echo "    su-scheduler remove <id> # remove job"
+echo ""
+echo "  Manual run:"
+echo "    su -c 'sh $BACKUP_DST --full-sync'"
+echo "    su -c 'sh $BACKUP_DST --cloud-only'"
