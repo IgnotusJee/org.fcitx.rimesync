@@ -1,6 +1,7 @@
 #!/system/bin/sh
 # ============================================================
 # rime-sync-scheduler — crond4android setup script
+# !! DEPRECATED — use setup-suscheduler.sh instead !!
 # ============================================================
 # Sets up a cron job that:
 #   1. Triggers rime local sync via broadcast
@@ -23,7 +24,7 @@ BACKUP_SCRIPT="/data/adb/modules/rime-sync-scheduler/scripts/backup.sh"
 CRON_SCHEDULE="0 */6 * * *"
 
 # ── Build cron command ─────────────────────────────────────
-CRON_CMD="${CRON_SCHEDULE} am broadcast -a ${BROADCAST_ACTION} -n ${BROADCAST_PKG}/.FcitxApplication && sleep 10 && sh ${BACKUP_SCRIPT}"
+CRON_CMD="${CRON_SCHEDULE} am broadcast -a ${BROADCAST_ACTION} -p ${BROADCAST_PKG} --receiver-foreground && sleep 15 && sh ${BACKUP_SCRIPT}"
 
 echo "============================================"
 echo " rime-sync-scheduler cron setup"

@@ -137,7 +137,8 @@ object CloudSyncHelper {
         val bin = ensureRclone(context, onProgress) ?: return emptyList()
         val remotePath = if (path.isEmpty()) "$remote:" else "$remote:$path"
         val cmd = arrayOf(bin.absolutePath, "lsd", remotePath,
-            "--config", getConfigFile(context).absolutePath, "--max-depth", "1")
+            "--config", getConfigFile(context).absolutePath, "--max-depth", "1",
+            "--no-check-certificate", "--timeout", "30s")
         return try {
             val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().readText()
@@ -174,13 +175,20 @@ object CloudSyncHelper {
         if (remotes.isEmpty()) { onProgress?.invoke("No remotes in rclone.conf"); return false }
         val remote = remotes.first()
         val remoteFull = "$remote:${getRemoteSyncPath(context)}"
+        val cacheDir = File(context.cacheDir, "rclone_cache").also { it.mkdirs() }
         val cmd = arrayOf(bin.absolutePath, "bisync", localDir, remoteFull,
             "--config", configFile.absolutePath, "--create-empty-src-dirs",
             "--compare", "size,modtime,checksum",
+            "--cache-dir", cacheDir.absolutePath, "--resync",
+            "--no-check-certificate", "--timeout", "30s",
             "--log-file", File(context.filesDir, "rclone.log").absolutePath, "--log-level", "INFO")
+
+        val env = ProcessBuilder(*cmd).redirectErrorStream(true)
+        env.environment()["HOME"] = context.filesDir.absolutePath
+        env.environment()["TMPDIR"] = cacheDir.absolutePath
         onProgress?.invoke("$localDir ↔ $remoteFull")
         return try {
-            val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
+            val p = env.start()
             val out = p.inputStream.bufferedReader().readText()
             val ec = p.waitFor(); p.destroy()
             if (ec == 0 || ec == 2) {

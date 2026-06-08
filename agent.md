@@ -1,11 +1,11 @@
 # Rime Sync Scheduler
 
-LSPosed module that triggers [fcitx5-android](https://github.com/fcitx5-android/fcitx5-android) rime plugin's local sync (`api_->sync_user_data()`) on demand via broadcast, then optionally runs rclone to back up to remote storage. Paired with KernelSU + crond4android for fully automated periodic backups.
+LSPosed module that triggers [fcitx5-android](https://github.com/fcitx5-android/fcitx5-android) rime plugin's local sync (`api_->sync_user_data()`) on demand via broadcast, then optionally runs rclone bisync for bidirectional cloud sync. Paired with KernelSU/APatch + [Su Scheduler](https://github.com/rexackermann/su-scheduler) for fully automated periodic sync.
 
 ## Architecture
 
 ```
-[cron / manual trigger]
+[su-scheduler / manual trigger]
     │  am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC
     ▼
 ┌─────────────────────────────────────────────────────┐
@@ -70,9 +70,9 @@ bool RimeEngine::setSubConfig(path, config) {
 |---|---|
 | [LSPosed](https://github.com/LSPosed/LSPosed) | Hook framework, injects code into fcitx5-android |
 | fcitx5-android with rime plugin | Target app |
-| (optional) [KernelSU](https://kernelsu.org/) | Root for cron + rclone access to app data |
-| (optional) [crond4android](https://github.com/powerAn2020/crond4android) | Scheduled broadcast triggers |
-| (optional) rclone binary | Remote backup |
+| (optional) [KernelSU](https://kernelsu.org/) / [APatch](https://apatch.dev/) | Root for scheduler + rclone access to app data |
+| (optional) [Su Scheduler](https://github.com/rexackermann/su-scheduler) | Modern job scheduler for automated periodic sync |
+| (optional) rclone binary | Remote backup (auto-downloaded by app) |
 
 ## Files
 
@@ -83,10 +83,10 @@ rime-sync-scheduler/
 ├── app/src/main/AndroidManifest.xml   # xposedmodule metadata
 ├── app/src/main/assets/xposed_init   # declares hook entry class
 ├── app/src/main/res/values/arrays.xml # scope: fcitx5-android only
-├── module.prop                  # LSPosed module descriptor
+├── module.prop                  # KernelSU/APatch module descriptor
 ├── scripts/
-│   ├── backup.sh                # rclone sync script
-│   └── setup-crond.sh           # cron job setup for crond4android
+│   ├── backup.sh                # Unified sync script (local + cloud)
+│   └── setup-suscheduler.sh     # Su Scheduler registration (replaces crond4android)
 └── build files (Gradle)
 ```
 
@@ -119,39 +119,69 @@ Check logcat for results:
 logcat -s RimeSyncReceiver:I RimeSyncScheduler:I
 ```
 
-### Automated: KernelSU + crond4android
+### Automated: KernelSU / APatch + Su Scheduler
 
-1. Install [crond4android](https://github.com/powerAn2020/crond4android) in KernelSU
-2. Copy scripts:
+1. Install [Su Scheduler](https://github.com/rexackermann/su-scheduler) module in KernelSU/APatch Manager
+2. Copy scripts to module directory:
    ```bash
-   cp scripts/backup.sh /data/adb/modules/rime-sync-scheduler/scripts/
+   mkdir -p /data/adb/modules/rime-sync-scheduler/scripts
+   cp scripts/backup.sh scripts/setup-suscheduler.sh /data/adb/modules/rime-sync-scheduler/scripts/
    ```
-3. Edit `backup.sh` — set your rclone remote name and path
+3. Configure rclone via the app UI (import rclone.conf, set remote path)
 4. Run setup:
    ```bash
-   sh scripts/setup-crond.sh
+   # As root (in KernelSU/APatch context):
+   sh /data/adb/modules/rime-sync-scheduler/scripts/setup-suscheduler.sh
+   
+   # Or dry-run to preview:
+   sh /data/adb/modules/rime-sync-scheduler/scripts/setup-suscheduler.sh --dry-run
    ```
-5. This adds a cron job (default: every 6 hours) that:
-   - Sends `TRIGGER_RIME_SYNC` broadcast (→ rime local sync)
-   - Sleeps 10 seconds
-   - Runs rclone to sync rime data to remote
+5. This registers jobs that:
+   - Run on **device boot**
+   - Run **4x daily** (00:00, 06:00, 12:00, 18:00 — approx every 6 hours)
+   - Each job: broadcast local sync → wait 15s → rclone bisync
+   - Jobs have `--notify` flag for Android notifications
 
-### Manual rclone backup (without cron)
+Management:
+```bash
+su-scheduler list              # list all jobs
+su-scheduler run <id>          # trigger a job manually
+su-scheduler remove <id>       # delete a job
+su-scheduler log               # view execution log
+```
+
+### Manual sync (without scheduler)
 
 ```bash
-# After triggering sync manually, run:
-sh scripts/backup.sh
+# Full sync (local + cloud):
+sh scripts/backup.sh --full-sync
+
+# Local sync only:
+sh scripts/backup.sh --local-only
+
+# Cloud sync only:
+sh scripts/backup.sh --cloud-only
+
+# Dry run (preview cloud sync changes):
+sh scripts/backup.sh --full-sync --dry-run
 ```
 
 ## Data paths
 
+Paths are dynamically detected by the LSPosed hook (from fcitx5's `installation.yaml`) and written to:
+```
+/data/data/org.fcitx.rimesync/files/rime_paths.txt
+```
+The `backup.sh` script reads this file to determine the sync source directory.
+
 | Path | Description |
 |---|---|
-| `.../files/data/fcitx5/rime/` | Rime user data directory |
-| `.../files/data/fcitx5/rime/sync/` | Local sync output (after `sync_user_data()`) |
-| `.../files/data/fcitx5/rime/rclone.conf` | rclone config for remote sync |
+| `<rime_dir>/` | Rime user data directory (from `installation.yaml`) |
+| `<rime_dir>/sync/` | Local sync output (after `sync_user_data()`) |
+| `/data/data/org.fcitx.rimesync/files/rclone.conf` | rclone config (managed by app UI) |
+| `/data/data/org.fcitx.rimesync/files/rclone_bin/rclone` | Bundled rclone binary (auto-downloaded) |
 
-On most devices:
+On most devices the rime data lives under:
 ```
 /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/data/fcitx5/rime/
 ```
