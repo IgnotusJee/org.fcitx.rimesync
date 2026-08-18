@@ -12,12 +12,14 @@ fcitx5 launch
        ├─ Reads installation.yaml → writes rime_paths.txt + rime_sync.json
        └─ Registers TRIGGER_RIME_SYNC broadcast receiver
 
-su-scheduler fires daily (20:00)
+su-scheduler fires daily (08:00)
   └─ backup.sh
-       ├─ 1. Local sync (broadcast triggers Rime sync)
-       ├─ 2. Upload this device (rclone sync → remote)
-       ├─ 3. Download other devices (rclone sync ← remote)
-       └─ 4. Final local sync (fcitx5 loads new data)
+       ├─ 1. Stop fcitx5, remove stale .temp.userdb, then start it headlessly
+       ├─ 2. Local sync (broadcast triggers Rime sync)
+       ├─ 3. Upload this device (rclone sync → remote)
+       ├─ 4. Download other devices (rclone sync ← remote)
+       ├─ 5. Clean again and run the final local sync
+       └─ 6. Notify result, upload/download sizes, and elapsed time
 ```
 
 ## Prerequisites
@@ -92,7 +94,7 @@ After fcitx5 starts, the hook auto-generates config files at:
 # Push scripts
 adb push scripts/backup.sh scripts/setup-suscheduler.sh /data/local/tmp/
 
-# Install Su Scheduler, then run setup (defaults to 20:00 daily)
+# Install Su Scheduler, then run setup (defaults to 08:00 daily)
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh"
 
 # Custom time
@@ -104,6 +106,10 @@ adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh --no-dry-run --no-test"
 ```
 
 ## Manual Sync
+
+The script prevents overlapping runs. Before each local Rime sync it removes the
+exact transient `.temp.userdb` (including `LOCK`) only after confirming that the
+fcitx5 process has stopped; it does not remove the permanent user dictionaries.
 
 ```sh
 # Full sync (local → upload → download → local load)
@@ -123,6 +129,26 @@ Or trigger local sync via broadcast:
 ```sh
 am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC -p org.fcitx.fcitx5.android --receiver-foreground
 ```
+
+## Known fcitx5-android Issue
+
+Rime user-data sync in fcitx5-android can occasionally leave behind its temporary
+LevelDB database, `.temp.userdb`, with a `LOCK` still held by an old process or not
+cleaned up correctly. A later sync may show one error and log a message such as:
+
+```text
+Error opening db '.temp': ... LOCK already held by process
+```
+
+This can prevent some user-dictionary snapshots from being merged. See the related
+upstream report, [fcitx5-android #825](https://github.com/fcitx5-android/fcitx5-android/issues/825).
+
+This project works around the issue before every local sync: it force-stops fcitx5,
+waits until the process has exited, removes the complete `.temp.userdb`, starts
+fcitx5 headlessly, and then triggers Rime sync. A full run does this both before
+upload and before merging downloaded snapshots. Do not delete only `LOCK` while
+fcitx5 is running, as that can corrupt an active temporary LevelDB database. Schedule
+the job for a time when the IME is not in use to avoid a brief input interruption.
 
 ## Manage Schedule
 

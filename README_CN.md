@@ -12,12 +12,14 @@ fcitx5 启动
        ├─ 读取 installation.yaml → 写入 rime_paths.txt + rime_sync.json
        └─ 注册 TRIGGER_RIME_SYNC 广播接收器
 
-su-scheduler 定时触发（每天 20:00）
+su-scheduler 定时触发（每天 08:00）
   └─ backup.sh
-       ├─ 1. 本地同步（广播触发 Rime sync）
-       ├─ 2. 上传本设备（rclone sync → 远程）
-       ├─ 3. 下载其他设备（rclone sync ← 远程）
-       └─ 4. 最终本地同步（让 fcitx5 加载新数据）
+       ├─ 1. 停止 fcitx5，删除残留 .temp.userdb，再无界面启动
+       ├─ 2. 本地同步（广播触发 Rime sync）
+       ├─ 3. 上传本设备（rclone sync → 远程）
+       ├─ 4. 下载其他设备（rclone sync ← 远程）
+       ├─ 5. 再次清理临时库并进行最终本地同步
+       └─ 6. 通知成功/失败、上传量、下载量和耗时
 ```
 
 ## 前提条件
@@ -92,7 +94,7 @@ fcitx5 启动后，hook 会自动在以下目录生成配置文件：
 # Push 脚本到设备
 adb push scripts/backup.sh scripts/setup-suscheduler.sh /data/local/tmp/
 
-# 安装 Su Scheduler 模块后，运行 setup（默认每晚 20:00）
+# 安装 Su Scheduler 模块后，运行 setup（默认每天早上 08:00）
 adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh"
 
 # 自定义时间
@@ -104,6 +106,10 @@ adb shell su -c "sh /data/local/tmp/setup-suscheduler.sh --no-dry-run --no-test"
 ```
 
 ## 手动同步
+
+脚本会阻止多个同步任务重叠运行。每次 Rime 本地同步前，只有在确认 fcitx5
+进程已经退出后，才会删除精确路径下的临时数据库 `.temp.userdb`（包括其中的
+`LOCK`），不会删除正式用户词库。
 
 ```sh
 # 完整同步（本地 → 上传 → 下载 → 本地加载）
@@ -123,6 +129,25 @@ su -c "sh /sdcard/Scripts/rime_backup.sh --full-sync --dry-run"
 ```sh
 am broadcast -a org.fcitx.fcitx5.android.action.TRIGGER_RIME_SYNC -p org.fcitx.fcitx5.android --receiver-foreground
 ```
+
+## fcitx5-android 已知问题
+
+fcitx5-android 的 Rime 用户数据同步偶尔会遗留临时 LevelDB 数据库
+`.temp.userdb`，其 `LOCK` 仍被旧进程持有或未被正确清理。再次同步时可能显示
+一个错误，并在日志中出现类似信息：
+
+```text
+Error opening db '.temp': ... LOCK already held by process
+```
+
+这会导致部分用户词库快照合并失败。上游相关报告见
+[fcitx5-android #825](https://github.com/fcitx5-android/fcitx5-android/issues/825)。
+
+本项目采用以下规避方案：每次本地同步前强制停止 fcitx5，确认进程完全退出，
+删除整个 `.temp.userdb`，随后无界面启动 fcitx5 并触发同步。完整同步在上传前和
+下载后合并前都会执行这一流程。不要在 fcitx5 仍运行时单独删除 `LOCK`；这可能
+破坏正在使用的 LevelDB 临时数据库。安排在不使用输入法的时段执行，可避免
+停止进程造成的短暂输入中断。
 
 ## 管理定时任务
 

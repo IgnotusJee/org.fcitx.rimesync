@@ -5,11 +5,11 @@
 # 1. Check root & su-scheduler
 # 2. Copy backup.sh → /sdcard/Scripts/rime_backup.sh
 # 3. Dry-run test
-# 4. Register daily job (default 20:00, overridable)
+# 4. Register daily job (default 08:00, overridable)
 # 5. su-scheduler test
 #
 # Usage:
-#   sh setup-suscheduler.sh                 # default 20:00
+#   sh setup-suscheduler.sh                 # default 08:00
 #   sh setup-suscheduler.sh 08:00           # 8:00 AM
 #   sh setup-suscheduler.sh 2230 --no-dry-run --no-test
 #
@@ -40,7 +40,7 @@ for arg in "$@"; do
     esac
 done
 
-[ -z "$TIME" ] && TIME="2000"  # default 20:00
+[ -z "$TIME" ] && TIME="0800"  # default 08:00
 
 # Normalize time: HH:MM → HHMM
 TIME=$(echo "$TIME" | tr -d ':')
@@ -51,7 +51,7 @@ case "$TIME" in
         ;;
     *)
         echo "ERROR: Invalid time '$1'. Use HHMM or HH:MM (24h format)."
-        echo "  Example: 2000  08:00  2230"
+        echo "  Example: 0800  20:00  2230"
         exit 1
         ;;
 esac
@@ -138,20 +138,12 @@ fi
 # ═══════════════════════════════════════════════════════════════
 echo "[5] Registering scheduled job..."
 
-# Clean old rime-sync jobs
-"$SU_SCHED" list 2>/dev/null | while read -r line; do
-    case "$line" in
-        *rime_backup*|*backup.sh*|*rime-sync*|*rimesync*)
-            id=$(echo "$line" | awk '{print $1}')
-            if [ -n "$id" ] && [ "$id" != "ID" ]; then
-                "$SU_SCHED" remove "$id" 2>/dev/null && echo "  Removed old job $id"
-            fi
-            ;;
-    esac
-done
+# Su Scheduler 1.6.x removes tasks by command substring. This also handles
+# older entries whose trigger or notification modifiers differ.
+"$SU_SCHED" remove "rime_backup" >/dev/null 2>&1 || true
 
 # Register new job
-SYNC_CMD="sh ${BACKUP_DST} --full-sync; : --notify-end"
+SYNC_CMD="sh ${BACKUP_DST} --full-sync"
 "$SU_SCHED" add "$TIME" "$SYNC_CMD"
 echo "  ✓ Registered: ${TIME} daily → sh ${BACKUP_DST} --full-sync"
 
