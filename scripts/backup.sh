@@ -46,10 +46,11 @@ set_failure() {
 
 parse_transfer_amount() {
     stats_file="$1"
-    amount=$(sed -n 's/.*Transferred:[[:space:]]*\([^/]*\)[[:space:]]*\/.*/\1/p' "$stats_file" 2>/dev/null | tail -1)
-    # With --stats-one-line, newer rclone versions omit the "Transferred:" label.
-    [ -z "$amount" ] && amount=$(sed -n 's/.*NOTICE:[[:space:]]*\([^/]*\)[[:space:]]*\/.*/\1/p' "$stats_file" 2>/dev/null | tail -1)
-    amount=$(echo "$amount" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Accept only byte quantities on both sides of the slash. This excludes
+    # file counts and NOTICE errors containing URLs (e.g. "Failed to sync...").
+    # Match both formats in one pass so the last valid byte statistic wins.
+    amount=$(sed -nE 's/.*(Transferred:|NOTICE:)[[:space:]]*([0-9]+(\.[0-9]+)?[[:space:]]+(B|[kKMGTPEZY]i?B))[[:space:]]*\/[[:space:]]*[0-9]+(\.[0-9]+)?[[:space:]]+(B|[kKMGTPEZY]i?B)([[:space:],]|$).*/\2/p' "$stats_file" 2>/dev/null | tail -1)
+    amount=$(printf '%s\n' "$amount" | sed -E 's/[[:space:]]+/ /g')
     [ -z "$amount" ] && amount="0 B"
     echo "$amount"
 }
