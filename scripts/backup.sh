@@ -25,6 +25,9 @@ UPLOAD_AMOUNT="0 B"
 DOWNLOAD_AMOUNT="0 B"
 START_TIME=$(date +%s)
 LOCK_HELD=false
+SAVED_IME=""
+IME_USER=""
+IME_RESTORE_PENDING=false
 
 json_get() {
     file="$1"
@@ -79,15 +82,58 @@ notify_result() {
     su 2000 -c "cmd notification post -S bigtext -t '$safe_title' rime_sync_scheduler '$safe_body'" >/dev/null 2>&1 || true
 }
 
+save_input_method() {
+    # Do not overwrite a selection still awaiting restoration.
+    $IME_RESTORE_PENDING && return 1
+    IME_USER=$(am get-current-user 2>/dev/null)
+    case "$IME_USER" in
+        ''|*[!0-9]*) log "[local] ERROR: cannot determine input method user."; return 1 ;;
+    esac
+    SAVED_IME=$(settings --user "$IME_USER" get secure default_input_method 2>/dev/null)
+    case "$SAVED_IME" in
+        "$FCITX_PACKAGE"/*) IME_RESTORE_PENDING=true ;;
+        */*) IME_RESTORE_PENDING=false ;;
+        *) log "[local] ERROR: cannot read default input method; refusing to stop fcitx."; return 1 ;;
+    esac
+    log "[local] Default input method before restart (user=$IME_USER): $SAVED_IME"
+}
+
+restore_input_method() {
+    $IME_RESTORE_PENDING || return 0
+    # ime set goes through the system service, restoring both selection and
+    # binding even if force-stop caused Android to select a fallback keyboard.
+    ime_retries=3
+    while [ "$ime_retries" -gt 0 ]; do
+        if ime set --user "$IME_USER" "$SAVED_IME" >/dev/null 2>&1; then
+            current_ime=$(settings --user "$IME_USER" get secure default_input_method 2>/dev/null)
+            if [ "$current_ime" = "$SAVED_IME" ]; then
+                IME_RESTORE_PENDING=false
+                log "[local] Restored default input method (user=$IME_USER): $SAVED_IME"
+                return 0
+            fi
+        fi
+        ime_retries=$((ime_retries - 1))
+        [ "$ime_retries" -gt 0 ] && sleep 1
+    done
+    log "[local] ERROR: unable to restore default input method: $SAVED_IME"
+    return 1
+}
+
 on_exit() {
     exit_code=$?
     trap - EXIT
     [ "$FINAL_EXIT" -ne 0 ] && exit_code="$FINAL_EXIT"
+    # Keep the run lock until restoration finishes, including error exits.
+    if ! restore_input_method; then
+        [ "$exit_code" -eq 0 ] && exit_code=13
+    fi
     $LOCK_HELD && rmdir "$RUN_LOCK" 2>/dev/null
     notify_result "$exit_code"
     exit "$exit_code"
 }
 trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -131,8 +177,9 @@ prepare_fcitx_for_sync() {
     # (upstream: https://github.com/fcitx5-android/fcitx5-android/issues/825).
     # Removing only LOCK while fcitx is alive is unsafe: stop the owning process
     # first, then discard the complete transient database so Rime can recreate it.
+    save_input_method || return 1
     log "[local] Stopping fcitx before sync..."
-    am force-stop "$FCITX_PACKAGE" >/dev/null 2>&1
+    am force-stop --user "$IME_USER" "$FCITX_PACKAGE" >/dev/null 2>&1 || return 1
     retries=20
     while [ "$retries" -gt 0 ] && pidof "$FCITX_PACKAGE" >/dev/null 2>&1; do
         sleep 1
@@ -157,7 +204,7 @@ prepare_fcitx_for_sync() {
 
     log "[local] Starting fcitx service headlessly..."
     # Android blocks a normal background service start after force-stop.
-    am start-foreground-service -n "$FCITX_REMOTE_SERVICE" -a "$FCITX_IPC_ACTION" >/dev/null 2>&1 || return 1
+    am start-foreground-service --user "$IME_USER" -n "$FCITX_REMOTE_SERVICE" -a "$FCITX_IPC_ACTION" >/dev/null 2>&1 || return 1
     retries=15
     while [ "$retries" -gt 0 ] && ! pidof "$FCITX_PACKAGE" >/dev/null 2>&1; do
         sleep 1
@@ -165,6 +212,10 @@ prepare_fcitx_for_sync() {
     done
     pidof "$FCITX_PACKAGE" >/dev/null 2>&1 || return 1
     sleep 3
+    if ! restore_input_method; then
+        set_failure 13 "无法恢复默认输入法"
+        return 1
+    fi
 }
 
 run_local_sync() {

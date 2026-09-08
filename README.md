@@ -166,6 +166,11 @@ upload and before merging downloaded snapshots. Do not delete only `LOCK` while
 fcitx5 is running, as that can corrupt an active temporary LevelDB database. Schedule
 the job for a time when the IME is not in use to avoid a brief input interruption.
 
+Before each stop, the script saves the current user's selected input method. If
+fcitx5 was selected, it restores that selection with `ime set` after restart and
+verifies the result. Error exits also attempt restoration. Other selected keyboards
+are left alone. Restoration failures are logged and make the run report failure.
+
 ## Manage Schedule
 
 ```sh
