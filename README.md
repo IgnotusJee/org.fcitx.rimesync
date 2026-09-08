@@ -46,13 +46,29 @@ Enable in LSPosed Manager, scope: `fcitx5-android`.
 
 ### 3. Prepare rclone
 
-Place the arm64 rclone binary at:
+Install the Android build of rclone in Termux (recommended):
+
+```sh
+pkg install rclone
+```
+
+The script first uses `/data/data/com.termux/files/usr/bin/rclone` in place, using
+Android's system DNS resolver without relying on DNS redirection from proxy
+modules such as Surfing. The scheduler runs as root; the Termux UI need not be
+open. Keep Termux and its runtime installed, and update with `pkg upgrade rclone`.
+The log records the selected binary path and version.
+
+If the Termux binary is unavailable, the script checks PATH, then this location
+and supported module paths:
 
 ```
 /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/rclone_bin/rclone
 ```
 
-Create rclone config (same directory, `rclone.conf`):
+Generic static Linux builds may query localhost port 53 when Android has no
+`/etc/resolv.conf`, failing when the proxy is off. Prefer the Termux build above.
+
+Create the remote config at `rime_sync/rclone.conf` (not inside `rclone_bin`):
 ```ini
 [myremote]
 type = s3

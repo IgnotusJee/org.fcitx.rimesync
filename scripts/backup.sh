@@ -194,7 +194,13 @@ if [ "$MODE" = "full" ] || [ "$MODE" = "local" ]; then
 fi
 
 RCLONE=""
-if command -v rclone >/dev/null 2>&1; then
+# Termux's Android build uses the system DNS resolver. Generic static Linux
+# builds can fall back to localhost:53 and depend on a proxy's DNS redirect.
+# Run in place to preserve Termux's dynamic library/runtime paths.
+TERMUX_RCLONE="/data/data/com.termux/files/usr/bin/rclone"
+if [ -x "$TERMUX_RCLONE" ]; then
+    RCLONE="$TERMUX_RCLONE"
+elif command -v rclone >/dev/null 2>&1; then
     RCLONE=$(command -v rclone)
 else
     for candidate in "${SYNC_DATA_DIR}/rclone_bin/rclone" /data/adb/modules/rclone-binary/system/bin/rclone /data/adb/modules/rclone/system/bin/rclone /data/adb/modules/rime-sync-scheduler/rclone; do
@@ -252,6 +258,12 @@ if [ -z "$REMOTE_NAME" ]; then
 fi
 RCLONE_REMOTE_FULL="${REMOTE_NAME}:${REMOTE_SUB_PATH}"
 log "[cloud] rclone binary: $RCLONE"
+if ! rclone_version=$("$RCLONE" version 2>&1); then
+    ERROR_REASON="rclone 无法运行"
+    log "[cloud] ERROR: rclone version check failed: $rclone_version"
+    exit 1
+fi
+log "[cloud] rclone version: $(printf '%s\n' "$rclone_version" | head -1)"
 log "[cloud] Local source: $SYNC_DIR"
 log "[cloud] Remote: $RCLONE_REMOTE_FULL"
 log "[cloud] Device name: $DEVICE_NAME"

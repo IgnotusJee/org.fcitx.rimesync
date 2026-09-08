@@ -46,13 +46,27 @@ su-scheduler 定时触发（每天 08:00）
 
 ### 3. 准备 rclone
 
-将 arm64 版 rclone 二进制放入：
+推荐在 Termux 中安装 Android 版 rclone：
+
+```sh
+pkg install rclone
+```
+
+脚本优先直接调用 `/data/data/com.termux/files/usr/bin/rclone`，使用 Android
+系统 DNS 解析器，避免依赖 Surfing 等代理模块的 DNS 转发。定时任务由 root
+执行，无需打开 Termux 界面；请保留 Termux 及其安装环境，并通过 `pkg upgrade rclone`
+更新。日志会记录实际使用的二进制路径和版本。
+
+未安装 Termux 版时，脚本会依次查找 PATH、以下路径及支持的模块路径：
 
 ```
 /storage/emulated/0/Android/data/org.fcitx.fcitx5.android/files/rime_sync/rclone_bin/rclone
 ```
 
-在同目录创建 rclone 配置文件 `rclone.conf`：
+通用 Linux 静态版可能因 Android 缺少 `/etc/resolv.conf` 而查询本机 `:53`，
+在代理关闭时解析失败；优先使用上述 Termux 版。
+
+在 `rime_sync/rclone.conf` 创建远端配置文件（不是 `rclone_bin` 子目录）：
 ```ini
 [myremote]
 type = s3
